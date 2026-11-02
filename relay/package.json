@@ -1,0 +1,16 @@
+{
+  "name": "familia-tv-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Relay que lleva mensajes del móvil a la TV de casa",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
