@@ -1,7 +1,8 @@
 // Relay Familia TV
-//   POST /send    (móvil)  -> guarda el mensaje y lo empuja a la TV
-//   GET  /status  (móvil)  -> { tv: true|false, pendientes: n }
-//   WS   /ws      (TV)     -> recibe mensajes, responde {type:"ack", id}
+//   POST /send                         (móvil) -> guarda el mensaje y lo empuja a la TV
+//   GET  /status                       (móvil) -> { tv, pendientes }
+//   WS   /ws?role=tv                   (TV)    -> recibe mensajes; manda {type:"ack"} y {type:"reply"}
+//   WS   /ws?role=phone&uid=<uid>      (móvil) -> recibe las respuestas que da la TV
 // Todo (menos /health) exige el token: header "Authorization: Bearer <TOKEN>".
 
 const http = require('http');
@@ -17,11 +18,19 @@ if (!TOKEN) {
 
 const MAX_TEXT = 500;            // caracteres por mensaje
 const MAX_FROM = 30;
+const MAX_AVATAR = 40000;        // caracteres base64 de la foto (~30 KB)
 const MAX_PENDING = 50;          // mensajes en cola si la TV está apagada
+const MAX_REPLIES = 20;          // respuestas en cola por persona si su móvil está sin conexión
+const MAX_REPLY_QUEUES = 100;    // personas distintas con respuestas en cola
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // lo que pasa de 24 h en cola se descarta
+const CHOICES = new Set(['ok', 'voy', 'ahora_no', 'sin_respuesta']);
+const UID_RE = /^[A-Za-z0-9-]{8,64}$/;
+const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
-const pending = [];              // { id, from, text, ts } hasta que la TV hace ack
+const pending = [];              // mensajes para la TV hasta que haga ack
 let tv = null;                   // WebSocket de la TV conectada
+const phones = new Map();        // uid -> WebSocket del móvil de esa persona
+const replies = new Map();       // uid -> respuestas pendientes de entregar a ese móvil
 
 // ---------- utilidades ----------
 const digest = (s) => crypto.createHash('sha256').update(String(s)).digest();
@@ -39,7 +48,7 @@ function json(res, code, body) {
   res.end(data);
 }
 
-function readBody(req, limit = 4096) {
+function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -57,7 +66,7 @@ function readBody(req, limit = 4096) {
   });
 }
 
-const tvOnline = () => tv !== null && tv.readyState === tv.OPEN;
+const isOpen = (ws) => ws !== null && ws !== undefined && ws.readyState === ws.OPEN;
 
 function prune() {
   const limit = Date.now() - MAX_AGE_MS;
@@ -65,12 +74,28 @@ function prune() {
     if (pending[i].ts < limit) pending.splice(i, 1);
   }
   while (pending.length > MAX_PENDING) pending.shift();
+  for (const [uid, list] of replies) {
+    const fresh = list.filter((r) => r.ts >= limit);
+    if (fresh.length) replies.set(uid, fresh);
+    else replies.delete(uid);
+  }
 }
 
 function sendToTv(msg) {
-  if (!tvOnline()) return false;
+  if (!isOpen(tv)) return false;
   try {
     tv.send(JSON.stringify({ type: 'msg', ...msg }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function sendReplyToPhone(uid, entry) {
+  const ws = phones.get(uid);
+  if (!isOpen(ws)) return false;
+  try {
+    ws.send(JSON.stringify({ type: 'reply', ...entry }));
     return true;
   } catch (e) {
     return false;
@@ -90,33 +115,62 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/status') {
     prune();
-    return json(res, 200, { ok: true, tv: tvOnline(), pendientes: pending.length });
+    return json(res, 200, { ok: true, tv: isOpen(tv), pendientes: pending.length });
   }
 
   if (req.method === 'POST' && url.pathname === '/send') {
     let data;
     try {
-      data = JSON.parse(await readBody(req));
+      data = JSON.parse(await readBody(req, 65536));
     } catch (e) {
       return json(res, 400, { ok: false, error: 'json_invalido' });
     }
+    if (data === null || typeof data !== 'object') return json(res, 400, { ok: false, error: 'json_invalido' });
+
     const text = typeof data.text === 'string' ? data.text.trim() : '';
     const from = (typeof data.from === 'string' ? data.from.trim() : '') || 'Familia';
     if (!text) return json(res, 400, { ok: false, error: 'mensaje_vacio' });
     if (text.length > MAX_TEXT) return json(res, 400, { ok: false, error: 'mensaje_muy_largo' });
 
-    const msg = { id: crypto.randomUUID(), from: from.slice(0, MAX_FROM), text, ts: Date.now() };
+    // uid: identifica a quien manda (para devolverle las respuestas). Es opcional para
+    // que la versión anterior de la app siga funcionando.
+    let uid = '';
+    if (data.uid !== undefined && data.uid !== null && data.uid !== '') {
+      if (typeof data.uid !== 'string' || !UID_RE.test(data.uid)) {
+        return json(res, 400, { ok: false, error: 'uid_invalido' });
+      }
+      uid = data.uid;
+    }
+
+    let avatar;
+    if (data.avatar !== undefined && data.avatar !== null && data.avatar !== '') {
+      if (typeof data.avatar !== 'string' || data.avatar.length > MAX_AVATAR || !B64_RE.test(data.avatar)) {
+        return json(res, 400, { ok: false, error: 'avatar_invalido' });
+      }
+      avatar = data.avatar;
+    }
+
+    const msg = {
+      id: crypto.randomUUID(),
+      uid,
+      from: from.slice(0, MAX_FROM),
+      text,
+      avatar,
+      duration: data.duration === 'larga' ? 'larga' : 'normal',
+      reply: data.reply === true && uid !== '',
+      ts: Date.now(),
+    };
     pending.push(msg);
     prune();
     const delivered = sendToTv(msg);
-    console.log(`[send] ${msg.from}: ${msg.text.slice(0, 60)} -> ${delivered ? 'TV' : 'en cola'}`);
+    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.slice(0, 60)} -> ${delivered ? 'TV' : 'en cola'}`);
     return json(res, 200, { ok: true, id: msg.id, delivered, queued: !delivered });
   }
 
   json(res, 404, { ok: false, error: 'no_existe' });
 });
 
-// ---------- WebSocket (la TV) ----------
+// ---------- WebSocket ----------
 const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
 
 server.on('upgrade', (req, socket, head) => {
@@ -126,50 +180,111 @@ server.on('upgrade', (req, socket, head) => {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
+  if (url.searchParams.get('role') === 'phone' && !UID_RE.test(url.searchParams.get('uid') || '')) {
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
-wss.on('connection', (ws) => {
+function handleTvMessage(m) {
+  if (m.type === 'ack' && typeof m.id === 'string') {
+    const i = pending.findIndex((p) => p.id === m.id);
+    if (i !== -1) pending.splice(i, 1);
+    return;
+  }
+  if (m.type === 'reply') {
+    if (typeof m.to !== 'string' || !UID_RE.test(m.to)) return;
+    if (typeof m.choice !== 'string' || !CHOICES.has(m.choice)) return;
+    if (!replies.has(m.to) && replies.size >= MAX_REPLY_QUEUES) return; // tope de colas distintas
+    const entry = {
+      rid: crypto.randomUUID(),
+      id: String(m.id || '').slice(0, 64),
+      choice: m.choice,
+      re: String(m.re || '').slice(0, 80),
+      ts: Date.now(),
+    };
+    const list = replies.get(m.to) || [];
+    list.push(entry);
+    while (list.length > MAX_REPLIES) list.shift();
+    replies.set(m.to, list);
+    const sent = sendReplyToPhone(m.to, entry);
+    console.log(`[reply] ${m.choice} -> ${sent ? 'móvil' : 'en cola'}`);
+  }
+}
+
+function attachTv(ws) {
   if (tv && tv !== ws) {
     try { tv.close(4000, 'reemplazada'); } catch (e) { /* ya cerrada */ }
   }
   tv = ws;
-  ws.isAlive = true;
   console.log('[ws] TV conectada');
 
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', (raw) => {
+    ws.isAlive = true;
+    let m;
+    try { m = JSON.parse(raw.toString()); } catch (e) { return; }
+    if (m && typeof m === 'object') handleTvMessage(m);
+  });
+  ws.on('close', () => {
+    if (tv === ws) tv = null;
+    console.log('[ws] TV desconectada');
+  });
+
+  // Entregar lo que quedó pendiente mientras la TV estaba apagada
+  prune();
+  for (const m of pending) sendToTv(m);
+}
+
+function attachPhone(ws, uid) {
+  const old = phones.get(uid);
+  if (old && old !== ws) {
+    try { old.close(4000, 'reemplazada'); } catch (e) { /* ya cerrada */ }
+  }
+  phones.set(uid, ws);
+  console.log('[ws] móvil conectado');
 
   ws.on('message', (raw) => {
     ws.isAlive = true;
     let m;
     try { m = JSON.parse(raw.toString()); } catch (e) { return; }
     if (m && m.type === 'ack' && typeof m.id === 'string') {
-      const i = pending.findIndex((p) => p.id === m.id);
-      if (i !== -1) pending.splice(i, 1);
+      const list = replies.get(uid);
+      if (!list) return;
+      const rest = list.filter((r) => r.rid !== m.id);
+      if (rest.length) replies.set(uid, rest);
+      else replies.delete(uid);
     }
   });
-
   ws.on('close', () => {
-    if (tv === ws) tv = null;
-    console.log('[ws] TV desconectada');
+    if (phones.get(uid) === ws) phones.delete(uid);
+    console.log('[ws] móvil desconectado');
   });
+
+  // Respuestas que llegaron mientras el móvil estaba sin conexión
+  prune();
+  for (const entry of replies.get(uid) || []) sendReplyToPhone(uid, entry);
+}
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, 'http://localhost');
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('error', () => { /* el 'close' se encarga */ });
 
-  // Entregar lo que quedó pendiente mientras la TV estaba apagada
-  prune();
-  for (const m of pending) sendToTv(m);
+  if (url.searchParams.get('role') === 'phone') attachPhone(ws, url.searchParams.get('uid'));
+  else attachTv(ws);
 });
 
-// Si la TV deja de contestar (cortaron el wifi, la apagaron de golpe) la damos de baja
+// Si alguien deja de contestar (cortaron el wifi, apagaron de golpe) lo damos de baja
 setInterval(() => {
-  if (tv) {
-    if (!tv.isAlive) {
-      console.log('[ws] TV sin respuesta, cerrando');
-      tv.terminate();
-      return;
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) {
+      ws.terminate();
+      continue;
     }
-    tv.isAlive = false;
-    try { tv.ping(); } catch (e) { /* se cierra solo */ }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) { /* se cierra solo */ }
   }
 }, 30000);
 

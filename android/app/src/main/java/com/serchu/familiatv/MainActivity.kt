@@ -2,10 +2,15 @@ package com.serchu.familiatv
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Typeface
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,11 +22,13 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -35,11 +42,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 
 /**
  * Un solo APK:
- *  - en el móvil: pantalla para escribir y mandar mensajes
+ *  - en el móvil: perfil (foto y nombre), pantalla para escribir y mandar mensajes
  *  - en la TV: pantalla de estado (el servicio hace el trabajo de fondo)
  */
 class MainActivity : Activity() {
@@ -48,6 +57,7 @@ class MainActivity : Activity() {
     private val match = ViewGroup.LayoutParams.MATCH_PARENT
     private val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
     private val maxLen = 500
+    private val reqPhoto = 1001
     private var isTv = false
 
     // Frases rápidas del móvil: tocás una y se copia al cuadro de texto (después podés editarla)
@@ -61,11 +71,18 @@ class MainActivity : Activity() {
 
     // móvil
     private lateinit var statusPill: TextView
+    private lateinit var profileAvatarHolder: FrameLayout
+    private lateinit var profileName: TextView
     private lateinit var input: EditText
     private lateinit var counter: TextView
+    private lateinit var durationChip: TextView
+    private lateinit var replyChip: TextView
+    private lateinit var replyHint: TextView
     private lateinit var sendBtn: TextView
     private lateinit var feedback: TextView
     private var sending = false
+    private var longDuration = false
+    private var wantReply = false
 
     // TV
     private lateinit var tvStatus: TextView
@@ -91,11 +108,12 @@ class MainActivity : Activity() {
         isTv = Device.isTv(this)
         if (isTv) {
             setContentView(buildTv())
-            startRelay()
-            askNotificationPermission()
+            startService(RelayService::class.java)
         } else {
             setContentView(buildPhone())
+            startService(PhoneService::class.java)
         }
+        askNotificationPermission()
     }
 
     override fun onResume() {
@@ -109,7 +127,7 @@ class MainActivity : Activity() {
         main.removeCallbacks(phonePoll)
     }
 
-    // ------------------------------------------------------------------ helpers de vista
+    // ------------------------------------------------------------------ helpers
 
     private fun label(text: String, sp: Float, color: Int, bold: Boolean = false): TextView =
         TextView(this).apply {
@@ -124,6 +142,28 @@ class MainActivity : Activity() {
             topMargin = dp(top)
             bottomMargin = dp(bottom)
         }
+
+    private fun toast(text: String) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
+
+    /** Deja corriendo el servicio de fondo que corresponde (TV: recibe mensajes; móvil: recibe respuestas). */
+    private fun startService(service: Class<*>) {
+        if (!Cfg.configured) return
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, service))
+        } catch (e: Exception) {
+            toast("No se pudo iniciar el servicio en segundo plano.")
+        }
+    }
+
+    private fun askNotificationPermission() {
+        if (!isTv && Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+    }
 
     // ------------------------------------------------------------------ MÓVIL
 
@@ -152,6 +192,32 @@ class MainActivity : Activity() {
             )
         }
 
+        // Perfil: así te ven en la tele
+        val profile = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedBg(Pal.card, dp(22))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        profileAvatarHolder = FrameLayout(this).apply {
+            isClickable = true
+            setOnClickListener { pickPhoto() }
+        }
+        profileName = label("", 18f, Pal.text, bold = true)
+        val nameCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setOnClickListener { editName() }
+        }
+        nameCol.addView(profileName, lp(wrap, wrap))
+        nameCol.addView(label("Tocá la foto o el nombre para cambiarlos", 12f, Pal.muted), lp(wrap, wrap, top = 2))
+        profile.addView(profileAvatarHolder, LinearLayout.LayoutParams(dp(56), dp(56)))
+        profile.addView(nameCol, lp(0, wrap).apply {
+            weight = 1f
+            marginStart = dp(14)
+        })
+        root.addView(profile, lp(match, wrap, top = 16))
+
         // Tarjeta con el cuadro de texto
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -165,7 +231,7 @@ class MainActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             setBackgroundColor(Color.TRANSPARENT)
             setPadding(0, 0, 0, 0)
-            minLines = 5
+            minLines = 4
             gravity = Gravity.TOP or Gravity.START
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -182,10 +248,39 @@ class MainActivity : Activity() {
         counter = label("0/$maxLen", 12f, Pal.muted).apply { gravity = Gravity.END }
         card.addView(input, lp(match, wrap))
         card.addView(counter, lp(match, wrap))
-        root.addView(card, lp(match, wrap, top = 18))
+        root.addView(card, lp(match, wrap, top = 14))
+
+        // Opciones del mensaje
+        durationChip = label("", 14f, Pal.text).apply {
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            isClickable = true
+            setOnClickListener {
+                longDuration = !longDuration
+                renderOptions()
+            }
+        }
+        replyChip = label("", 14f, Pal.text).apply {
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            isClickable = true
+            setOnClickListener {
+                wantReply = !wantReply
+                renderOptions()
+            }
+        }
+        val options = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        options.addView(durationChip, lp(wrap, wrap).apply { rightMargin = dp(8) })
+        options.addView(replyChip, lp(wrap, wrap))
+        root.addView(options, lp(match, wrap, top = 14))
+
+        replyHint = label(
+            "Con respuesta, el mensaje toma el control de la tele hasta que alguien elija OK, Voy o Ahora no.",
+            12f,
+            Pal.muted
+        )
+        root.addView(replyHint, lp(match, wrap, top = 8))
 
         // Frases rápidas
-        root.addView(label("Frases rápidas", 13f, Pal.muted), lp(wrap, wrap, top = 18, bottom = 8))
+        root.addView(label("Frases rápidas", 13f, Pal.muted), lp(wrap, wrap, top = 16, bottom = 8))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         quickPhrases.forEach { phrase ->
             val chip = label(phrase, 14f, Pal.text).apply {
@@ -215,7 +310,7 @@ class MainActivity : Activity() {
             isClickable = true
             setOnClickListener { send() }
         }
-        root.addView(sendBtn, lp(match, dp(58), top = 22))
+        root.addView(sendBtn, lp(match, dp(58), top = 20))
 
         feedback = label("", 14f, Pal.muted).apply {
             gravity = Gravity.CENTER
@@ -223,12 +318,36 @@ class MainActivity : Activity() {
         }
         root.addView(feedback, lp(match, wrap, top = 14))
 
+        renderProfile()
+        renderOptions()
         updateSendState()
 
         return ScrollView(this).apply {
             isFillViewport = true
             addView(root)
         }
+    }
+
+    private fun renderProfile() {
+        val name = Profile.name(this)
+        profileName.text = name
+        profileAvatarHolder.removeAllViews()
+        profileAvatarHolder.addView(
+            avatarView(name, Profile.avatar(this), 56),
+            FrameLayout.LayoutParams(dp(56), dp(56))
+        )
+    }
+
+    private fun renderOptions() {
+        durationChip.text = if (longDuration) "Dura: larga" else "Dura: normal"
+        durationChip.background = withRipple(
+            roundedBg(if (longDuration && !wantReply) Pal.accent else Pal.cardHi, dp(20))
+        )
+        durationChip.alpha = if (wantReply) 0.4f else 1f
+
+        replyChip.text = if (wantReply) "Pedir respuesta: sí" else "Pedir respuesta: no"
+        replyChip.background = withRipple(roundedBg(if (wantReply) Pal.accent else Pal.cardHi, dp(20)))
+        replyHint.visibility = if (wantReply) View.VISIBLE else View.GONE
     }
 
     private fun updateSendState() {
@@ -244,6 +363,97 @@ class MainActivity : Activity() {
         feedback.alpha = 1f
         feedback.animate().alpha(0f).setStartDelay(4_000).setDuration(600).start()
     }
+
+    // ---- perfil: nombre y foto ----
+
+    private fun editName() {
+        val field = EditText(this).apply {
+            setText(Profile.name(this@MainActivity))
+            setSelection(text.length)
+            filters = arrayOf<InputFilter>(InputFilter.LengthFilter(30))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Tu nombre en la tele")
+            .setView(field)
+            .setPositiveButton("Guardar") { _, _ ->
+                val v = field.text.toString().trim()
+                if (v.isNotEmpty()) {
+                    Profile.setName(this, v)
+                    renderProfile()
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pickPhoto() {
+        try {
+            val pick = Intent(Intent.ACTION_GET_CONTENT)
+                .setType("image/*")
+                .addCategory(Intent.CATEGORY_OPENABLE)
+            startActivityForResult(pick, reqPhoto)
+        } catch (e: Exception) {
+            toast("No se pudo abrir la galería.")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != reqPhoto || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val b64 = loadAvatar(uri)
+        if (b64 == null) {
+            toast("No se pudo usar esa foto.")
+        } else {
+            Profile.setAvatar(this, b64)
+            renderProfile()
+        }
+    }
+
+    /** Recorta la foto en cuadrado, la achica a 128 px y la devuelve en base64 (pesa unos 5 KB). */
+    private fun loadAvatar(uri: Uri): String? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= 256 && bounds.outHeight / (sample * 2) >= 256) sample *= 2
+
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                ?: return null
+            val rotation = contentResolver.openInputStream(uri)?.use { exifRotation(it) } ?: 0
+
+            val side = minOf(bmp.width, bmp.height)
+            val matrix = Matrix().apply {
+                postRotate(rotation.toFloat())
+                postScale(128f / side, 128f / side)
+            }
+            val square = Bitmap.createBitmap(
+                bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, matrix, true
+            )
+            val out = ByteArrayOutputStream()
+            square.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun exifRotation(stream: InputStream): Int = try {
+        when (ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            else -> 0
+        }
+    } catch (e: Exception) {
+        0
+    }
+
+    // ---- enviar y consultar ----
 
     private fun relayRequest(path: String): Request.Builder =
         Request.Builder()
@@ -262,15 +472,19 @@ class MainActivity : Activity() {
         sendBtn.text = "Enviando…"
         updateSendState()
 
-        val body = JSONObject()
-            .put("from", Cfg.senderName)
+        val askedReply = wantReply
+        val json = JSONObject()
+            .put("uid", Profile.uid(this))
+            .put("from", Profile.name(this))
             .put("text", text)
-            .toString()
-            .toRequestBody("application/json; charset=utf-8".toMediaType())
+            .put("duration", if (longDuration) "larga" else "normal")
+            .put("reply", askedReply)
+        Profile.avatar(this)?.let { json.put("avatar", it) }
+        val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
         Net.http.newCall(relayRequest("/send").post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { sendDone(false, false, "No hay conexión con el servidor. Probá de nuevo.") }
+                runOnUiThread { sendDone(false, false, askedReply, "No hay conexión con el servidor. Probá de nuevo.") }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -279,24 +493,26 @@ class MainActivity : Activity() {
                 val delivered = runCatching { JSONObject(raw).optBoolean("delivered", false) }.getOrDefault(false)
                 runOnUiThread {
                     when {
-                        code in 200..299 -> sendDone(true, delivered, null)
-                        code == 401 -> sendDone(false, false, "El código de acceso no coincide con el del servidor.")
-                        else -> sendDone(false, false, "El servidor respondió con un error ($code).")
+                        code in 200..299 -> sendDone(true, delivered, askedReply, null)
+                        code == 401 -> sendDone(false, false, askedReply, "El código de acceso no coincide con el del servidor.")
+                        else -> sendDone(false, false, askedReply, "El servidor respondió con un error ($code).")
                     }
                 }
             }
         })
     }
 
-    private fun sendDone(ok: Boolean, delivered: Boolean, error: String?) {
+    private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?) {
         sending = false
         sendBtn.text = "Enviar a la tele"
         if (ok) {
             input.setText("")
-            if (delivered) {
-                showFeedback("Enviado. La tele lo muestra ahora.", Pal.ok)
-            } else {
-                showFeedback("Quedó en cola: se muestra apenas se prenda la tele.", Pal.warn)
+            wantReply = false // para no tomar el control de la tele sin querer en el próximo mensaje
+            renderOptions()
+            when {
+                delivered && askedReply -> showFeedback("Enviado. Te aviso cuando respondan.", Pal.ok)
+                delivered -> showFeedback("Enviado. La tele lo muestra ahora.", Pal.ok)
+                else -> showFeedback("Quedó en cola: se muestra apenas se prenda la tele.", Pal.warn)
             }
             fetchStatus()
         } else {
@@ -387,8 +603,15 @@ class MainActivity : Activity() {
         tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 16))
         root.addView(tvPermBox, lp(wrap, wrap, top = 28))
 
-        val test = tvButton("Enviar mensaje de prueba") { sendTest() }
-        root.addView(test, lp(wrap, wrap, top = 28))
+        val tests = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val test = tvButton("Probar mensaje") { sendTest(RelayService.ACTION_TEST) }
+        val testReply = tvButton("Probar con respuesta") { sendTest(RelayService.ACTION_TEST_REPLY) }
+        tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(16) })
+        tests.addView(testReply, lp(wrap, wrap))
+        root.addView(tests, lp(wrap, wrap, top = 28))
         test.requestFocus()
 
         return root
@@ -412,22 +635,14 @@ class MainActivity : Activity() {
         tvPermBox.visibility = if (Settings.canDrawOverlays(this)) View.GONE else View.VISIBLE
     }
 
-    private fun startRelay() {
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, RelayService::class.java))
-        } catch (e: Exception) {
-            Toast.makeText(this, "No se pudo iniciar el servicio.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun sendTest() {
+    private fun sendTest(action: String) {
         try {
             ContextCompat.startForegroundService(
                 this,
-                Intent(this, RelayService::class.java).setAction(RelayService.ACTION_TEST)
+                Intent(this, RelayService::class.java).setAction(action)
             )
         } catch (e: Exception) {
-            Toast.makeText(this, "No se pudo mostrar la prueba.", Toast.LENGTH_LONG).show()
+            toast("No se pudo mostrar la prueba.")
         }
     }
 
@@ -437,19 +652,7 @@ class MainActivity : Activity() {
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             )
         } catch (e: Exception) {
-            Toast.makeText(
-                this,
-                "Esta TV no tiene esa pantalla. Usá el comando adb de arriba.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    private fun askNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            toast("Esta TV no tiene esa pantalla. Usá el comando adb de arriba.")
         }
     }
 }

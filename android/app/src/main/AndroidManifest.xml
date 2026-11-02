@@ -47,6 +47,15 @@
                 android:value="family_message_relay" />
         </service>
 
+        <service
+            android:name=".PhoneService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="family_message_replies" />
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

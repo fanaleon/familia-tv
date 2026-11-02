@@ -4,15 +4,23 @@ import android.app.UiModeManager
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
+import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
+import android.view.ViewOutlineProvider
+import android.widget.ImageView
 import android.widget.TextView
 import okhttp3.OkHttpClient
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** Estado compartido entre el servicio y la pantalla de la TV. */
@@ -36,6 +44,36 @@ object Device {
         val ui = ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
         return ui.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
             ctx.packageManager.hasSystemFeature("android.software.leanback")
+    }
+}
+
+/**
+ * Quién es el dueño de este móvil: un id propio (no cambia nunca), su nombre y su foto
+ * (ya achicada, en base64). Se guardan solo en el teléfono.
+ */
+object Profile {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("profile", Context.MODE_PRIVATE)
+
+    fun uid(ctx: Context): String {
+        val p = prefs(ctx)
+        val saved = p.getString("uid", null)
+        if (saved != null) return saved
+        val fresh = UUID.randomUUID().toString()
+        p.edit().putString("uid", fresh).apply()
+        return fresh
+    }
+
+    fun name(ctx: Context): String =
+        prefs(ctx).getString("name", null)?.takeIf { it.isNotBlank() } ?: Cfg.senderName
+
+    fun setName(ctx: Context, name: String) {
+        prefs(ctx).edit().putString("name", name.trim()).apply()
+    }
+
+    fun avatar(ctx: Context): String? = prefs(ctx).getString("avatar", null)
+
+    fun setAvatar(ctx: Context, base64: String?) {
+        prefs(ctx).edit().putString("avatar", base64).apply()
     }
 }
 
@@ -96,5 +134,43 @@ fun Context.tvButton(label: String, onClick: () -> Unit): TextView {
             addState(intArrayOf(), roundedBg(Pal.cardHi, ctx.dp(16)))
         }
         setOnClickListener { onClick() }
+    }
+}
+
+/**
+ * Círculo con la foto de la persona; si no tiene foto (o no se puede leer), la inicial
+ * del nombre sobre un color propio. El tamaño lo pone quien lo agrega a su layout.
+ */
+fun Context.avatarView(name: String, base64: String?, sizeDp: Int): View {
+    val bmp = base64?.let {
+        try {
+            val bytes = Base64.decode(it, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    if (bmp != null) {
+        return ImageView(this).apply {
+            setImageBitmap(bmp)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            clipToOutline = true
+        }
+    }
+    return TextView(this).apply {
+        text = name.trim().take(1).uppercase()
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeDp * 0.42f)
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Pal.avatars[(name.hashCode() and 0x7fffffff) % Pal.avatars.size])
+        }
     }
 }

@@ -53,7 +53,7 @@ Para que el mensaje aparezca encima de lo que se está viendo:
 adb shell appops set com.serchu.familiatv SYSTEM_ALERT_WINDOW allow
 ```
 
-Abrí la app en la TV y probá con **Enviar mensaje de prueba**. Desde ahí arranca sola cada vez que se prende la tele.
+Abrí la app en la TV y probá con **Probar mensaje** y **Probar con respuesta**. Desde ahí arranca sola cada vez que se prende la tele.
 
 Opcional, para que Android no la duerma:
 
@@ -61,9 +61,20 @@ Opcional, para que Android no la duerma:
 adb shell dumpsys deviceidle whitelist +com.serchu.familiatv
 ```
 
+## Novedades de la versión 1.1
+
+- **Foto y nombre:** en el móvil, tocá la foto (o el nombre) de arriba. La foto se achica sola y viaja con cada mensaje.
+- **Más de una persona:** mamá instala **el mismo APK** en su móvil, toca su nombre y su foto, y listo. Cada móvil tiene su propia identidad; no hace falta tocar el servidor.
+- **Duración:** el botón *Dura: normal / larga* alarga el tiempo en pantalla (45 s o más, según el largo).
+- **Respuestas:** *Pedir respuesta: sí* muestra en la tele los botones **OK / Voy / Ahora no**. Quien tenga el control elige uno y a quien mandó le llega una notificación. Si nadie contesta en 3 minutos (o cierran con Atrás), le avisa «Nadie respondió». Para que los botones aparezcan hace falta el permiso de la TV del paso 6.
+- En el móvil la app deja una notificación mínima fija: es lo que la mantiene conectada para recibir las respuestas. Aceptá el permiso de notificaciones cuando lo pida.
+
+### Actualizar desde la 1.0
+Reemplazá los archivos del proyecto, hacé `git add -A`, `git commit -m "v1.1"` y `git push`. Railway se actualiza solo y GitHub Actions compila el APK nuevo; se instala encima del viejo (en la tele también). Los móviles/tele con la app vieja siguen funcionando con el servidor nuevo.
+
 ## Cambiar cosas
 - **Frases rápidas del móvil:** lista `quickPhrases` en `MainActivity.kt`.
-- **Cuánto dura el mensaje en pantalla:** en `Overlay.kt`, función `next()` (8 s + 70 ms por letra, máximo 30 s).
+- **Cuánto dura el mensaje en pantalla:** en `Overlay.kt`, función `stayMillis()`.
 - **Cambió la URL o el código:** actualizá los secrets y volvé a correr el workflow. El APK nuevo se instala encima del viejo, sin desinstalar.
 
 ## Cosas a saber

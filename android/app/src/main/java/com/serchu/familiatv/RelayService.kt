@@ -7,197 +7,131 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.net.ConnectivityManager
-import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
- * Corre siempre en la TV: mantiene abierta la conexión con el relay, reconecta sola
- * y muestra cada mensaje que llega.
+ * Corre siempre en la TV: mantiene la conexión con el relay, muestra cada mensaje que llega
+ * y manda al relay la respuesta que se elige con el control.
  */
 class RelayService : Service() {
 
     companion object {
         const val ACTION_TEST = "com.serchu.familiatv.TEST"
+        const val ACTION_TEST_REPLY = "com.serchu.familiatv.TEST_REPLY"
         private const val NOTIF_ID = 1
     }
 
     private val main = Handler(Looper.getMainLooper())
-    private val client = Net.http.newBuilder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(25, TimeUnit.SECONDS)
-        .build()
-
-    @Volatile private var socket: WebSocket? = null
-    @Volatile private var backoffMs = 2_000L
-    @Volatile private var lastConnectAt = 0L
-
     private lateinit var presenter: OverlayPresenter
+    private lateinit var link: RelayLink
     private var wakeLock: PowerManager.WakeLock? = null
-    private var netCallback: ConnectivityManager.NetworkCallback? = null
     private val seen = LinkedHashSet<String>()
-    private val reconnect = Runnable { connect() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        presenter = OverlayPresenter(applicationContext)
+        presenter = OverlayPresenter(applicationContext) { msg, choice -> sendReply(msg, choice) }
+        link = RelayLink(
+            applicationContext,
+            "role=tv",
+            onStateChange = { ok ->
+                RelayState.connected = ok
+                updateNotification(if (ok) "Conectada — esperando mensajes" else "Reconectando…")
+            },
+            onJson = { o -> handle(o) }
+        )
         Notifs.ensureChannels(this)
         goForeground(if (Cfg.configured) "Conectando…" else "App sin configurar")
         acquireWakeLock()
-        if (Cfg.configured) connect()
-        watchNetwork()
+        if (Cfg.configured) link.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_TEST) {
-            main.post {
-                presenter.show(
-                    Msg(
-                        "test-" + System.nanoTime(),
-                        Cfg.senderName,
-                        "Así se van a ver los mensajes. Todo funciona.",
-                        System.currentTimeMillis()
-                    )
-                )
-            }
+        when (intent?.action) {
+            ACTION_TEST -> showTest(false)
+            ACTION_TEST_REPLY -> showTest(true)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
-        val s = socket
-        socket = null
-        s?.cancel()
+        link.stop()
         RelayState.connected = false
-        netCallback?.let {
-            try {
-                (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
-                    .unregisterNetworkCallback(it)
-            } catch (e: Exception) { /* ya estaba dado de baja */ }
-        }
         wakeLock?.let { if (it.isHeld) it.release() }
         presenter.clear()
         super.onDestroy()
     }
 
-    // ---------- conexión ----------
+    // ---------- mensajes ----------
 
-    private fun connect() {
-        main.removeCallbacks(reconnect)
-        socket?.let {
-            socket = null
-            it.cancel()
+    private fun handle(o: JSONObject) {
+        if (o.optString("type") != "msg") return
+        val id = o.optString("id")
+        val body = o.optString("text")
+        if (id.isBlank() || body.isBlank()) return
+
+        // Confirmamos recepción para que el relay no lo reenvíe
+        link.send(JSONObject().put("type", "ack").put("id", id))
+
+        val fresh = synchronized(seen) {
+            val added = seen.add(id)
+            if (seen.size > 100) seen.remove(seen.first())
+            added
         }
-        lastConnectAt = System.currentTimeMillis()
-        try {
-            val req = Request.Builder()
-                .url(Cfg.wsUrl)
-                .header("Authorization", "Bearer ${Cfg.token}")
-                .build()
-            socket = client.newWebSocket(req, listener)
-        } catch (e: Exception) {
-            RelayState.connected = false
-            scheduleReconnect()
-        }
-    }
+        if (!fresh) return
 
-    private fun scheduleReconnect() {
-        main.removeCallbacks(reconnect)
-        main.postDelayed(reconnect, backoffMs)
-        backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
-    }
-
-    private fun connectionLost(ws: WebSocket) {
-        if (ws !== socket) return // es de una conexión vieja que ya reemplazamos
-        RelayState.connected = false
-        updateNotification("Reconectando…")
-        main.post { scheduleReconnect() }
-    }
-
-    private val listener = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            backoffMs = 2_000L
-            RelayState.connected = true
-            updateNotification("Conectada — esperando mensajes")
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            val o = try { JSONObject(text) } catch (e: Exception) { return }
-            if (o.optString("type") != "msg") return
-
-            val id = o.optString("id")
-            val body = o.optString("text")
-            if (id.isBlank() || body.isBlank()) return
-
-            // Confirmamos recepción para que el relay no lo reenvíe
-            webSocket.send(JSONObject().put("type", "ack").put("id", id).toString())
-
-            val fresh = synchronized(seen) {
-                val added = seen.add(id)
-                if (seen.size > 100) seen.remove(seen.first())
-                added
-            }
-            if (!fresh) return
-
-            val msg = Msg(
-                id,
-                o.optString("from", "Familia").ifBlank { "Familia" },
-                body,
-                o.optLong("ts", System.currentTimeMillis())
-            )
-            main.post {
-                RelayState.lastFrom = msg.from
-                RelayState.lastText = msg.text
-                RelayState.lastTs = msg.ts
-                presenter.show(msg)
-            }
-        }
-
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            webSocket.close(1000, null)
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            connectionLost(webSocket)
-        }
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            connectionLost(webSocket)
+        val msg = Msg(
+            id = id,
+            uid = o.optString("uid"),
+            from = o.optString("from", "Familia").ifBlank { "Familia" },
+            text = body,
+            ts = o.optLong("ts", System.currentTimeMillis()),
+            avatar = o.optString("avatar").takeIf { it.isNotBlank() },
+            longStay = o.optString("duration") == "larga",
+            needsReply = o.optBoolean("reply", false)
+        )
+        main.post {
+            RelayState.lastFrom = msg.from
+            RelayState.lastText = msg.text
+            RelayState.lastTs = msg.ts
+            presenter.show(msg)
         }
     }
 
-    /** Cuando vuelve el wifi (o la TV despierta del standby) reconecta sin esperar el backoff. */
-    private fun watchNetwork() {
-        val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                main.post {
-                    val recentlyTried = System.currentTimeMillis() - lastConnectAt < 3_000
-                    if (Cfg.configured && !RelayState.connected && !recentlyTried) {
-                        backoffMs = 2_000L
-                        connect()
-                    }
-                }
-            }
-        }
-        try {
-            (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
-                .registerDefaultNetworkCallback(cb)
-            netCallback = cb
-        } catch (e: Exception) { /* seguimos solo con el reintento por tiempo */ }
+    private fun sendReply(msg: Msg, choice: String) {
+        if (msg.uid.isBlank()) return // mensaje de prueba o de la versión anterior de la app
+        link.send(
+            JSONObject()
+                .put("type", "reply")
+                .put("to", msg.uid)
+                .put("id", msg.id)
+                .put("choice", choice)
+                .put("re", msg.text.take(60))
+        )
+    }
+
+    private fun showTest(withReply: Boolean) {
+        val m = Msg(
+            id = "test-" + System.nanoTime(),
+            uid = "",
+            from = Cfg.senderName,
+            text = if (withReply) {
+                "¿Vienen a cenar? Probá los botones con el control."
+            } else {
+                "Así se van a ver los mensajes. Todo funciona."
+            },
+            ts = System.currentTimeMillis(),
+            needsReply = withReply
+        )
+        main.post { presenter.show(m) }
     }
 
     private fun acquireWakeLock() {
