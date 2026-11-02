@@ -7,8 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.RingtoneManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
@@ -121,6 +122,15 @@ class OverlayPresenter(
     }
     private val afterSent = Runnable { dismiss() }
 
+    // Mientras un mensaje que pide respuesta siga sin contestar, repite el aviso sonoro
+    private val repeatChime: Runnable = object : Runnable {
+        override fun run() {
+            chime()
+            main.postDelayed(this, 20_000)
+        }
+    }
+    private var focusRequest: AudioFocusRequest? = null
+
     fun show(m: Msg) {
         if (!Settings.canDrawOverlays(ctx)) {
             notifyFallback(m)
@@ -133,6 +143,7 @@ class OverlayPresenter(
     fun clear() {
         main.removeCallbacks(autoHide)
         main.removeCallbacks(afterSent)
+        main.removeCallbacks(repeatChime)
         queue.clear()
         current?.let {
             try { wm.removeView(it.root) } catch (e: Exception) { /* ya no estaba */ }
@@ -163,7 +174,8 @@ class OverlayPresenter(
         current = built
         currentMsg = m
         answered = false
-        beep()
+        chime()
+        if (m.needsReply) main.postDelayed(repeatChime, 20_000)
         built.root.animate().alpha(1f).translationY(0f)
             .setDuration(350).setInterpolator(DecelerateInterpolator()).start()
         built.bar.animate().scaleX(0f)
@@ -178,6 +190,7 @@ class OverlayPresenter(
         dismissing = true
         main.removeCallbacks(autoHide)
         main.removeCallbacks(afterSent)
+        main.removeCallbacks(repeatChime)
         b.root.animate().alpha(0f).translationY(-ctx.dp(40).toFloat()).setDuration(300)
             .withEndAction {
                 try { wm.removeView(b.root) } catch (e: Exception) { /* ya no estaba */ }
@@ -197,6 +210,7 @@ class OverlayPresenter(
         if (answered || dismissing) return
         answered = true
         main.removeCallbacks(autoHide)
+        main.removeCallbacks(repeatChime)
         if (!m.needsReply) {
             dismiss()
             return
@@ -336,18 +350,54 @@ class OverlayPresenter(
         }
     }
 
-    private fun beep() {
+    /**
+     * Aviso sonoro pensado para cuando la tele está con música o un video y nadie mira la pantalla:
+     * tres pitidos por el mismo canal que la música (sigue el volumen de la tele) y, mientras
+     * suenan, le pide al sistema que baje un poco lo que se esté reproduciendo.
+     */
+    private fun chime() {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         try {
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val ringtone = RingtoneManager.getRingtone(ctx, uri)
-            if (ringtone != null) {
-                ringtone.play()
-                return
-            }
-        } catch (e: Exception) { /* probamos con el tono simple */ }
+            takeFocus(am)
+        } catch (e: Exception) { /* sin foco igual suena */ }
         try {
-            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90).startTone(ToneGenerator.TONE_PROP_ACK, 400)
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 250)
+            main.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP, 250) }, 400)
+            main.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 450) }, 800)
+            main.postDelayed({
+                tone.release()
+                try { dropFocus(am) } catch (e: Exception) { /* nada que soltar */ }
+            }, 1_800)
         } catch (e: Exception) { /* sin sonido */ }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun takeFocus(am: AudioManager) {
+        if (Build.VERSION.SDK_INT >= 26) {
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .build()
+            focusRequest = req
+            am.requestAudioFocus(req)
+        } else {
+            am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun dropFocus(am: AudioManager) {
+        if (Build.VERSION.SDK_INT >= 26) {
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            focusRequest = null
+        } else {
+            am.abandonAudioFocus(null)
+        }
     }
 
     private fun notifyFallback(m: Msg) {
