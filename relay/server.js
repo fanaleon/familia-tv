@@ -24,6 +24,7 @@ const MAX_REPLIES = 20;          // respuestas en cola por persona si su móvil 
 const MAX_REPLY_QUEUES = 100;    // personas distintas con respuestas en cola
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // lo que pasa de 24 h en cola se descarta
 const CHOICES = new Set(['ok', 'voy', 'ahora_no', 'sin_respuesta']);
+const COLORS = new Set(['azul', 'rosa', 'verde', 'amarillo']);
 const UID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
@@ -157,6 +158,7 @@ const server = http.createServer(async (req, res) => {
       text,
       avatar,
       duration: data.duration === 'larga' ? 'larga' : 'normal',
+      color: COLORS.has(data.color) ? data.color : '',
       reply: data.reply === true && uid !== '',
       ts: Date.now(),
     };

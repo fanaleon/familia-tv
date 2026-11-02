@@ -17,6 +17,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
+import androidx.core.graphics.ColorUtils
 import android.widget.ImageView
 import android.widget.TextView
 import okhttp3.OkHttpClient
@@ -75,6 +76,14 @@ object Profile {
     fun setAvatar(ctx: Context, base64: String?) {
         prefs(ctx).edit().putString("avatar", base64).apply()
     }
+
+    /** Color elegido para los mensajes: "azul", "rosa", "verde" o "amarillo". */
+    fun color(ctx: Context): String =
+        prefs(ctx).getString("color", null)?.takeIf { Pal.byKey(it) != null } ?: "azul"
+
+    fun setColor(ctx: Context, key: String) {
+        prefs(ctx).edit().putString("color", key).apply()
+    }
 }
 
 /** Paleta de la app. */
@@ -89,6 +98,17 @@ object Pal {
     val ok = 0xFF2ED573.toInt()
     val warn = 0xFFFFB142.toInt()
     val bad = 0xFFFF6B81.toInt()
+
+    /** Colores que se pueden elegir para los mensajes: clave que viaja por el servidor, nombre y color. */
+    val choices = listOf(
+        Triple("azul", "Azul", 0xFF2D8CFF.toInt()),
+        Triple("rosa", "Rosa", 0xFFFF4D9D.toInt()),
+        Triple("verde", "Verde", 0xFF2ED573.toInt()),
+        Triple("amarillo", "Amarillo", 0xFFFFC312.toInt())
+    )
+
+    /** Color de una clave; null si no la conocemos (por ejemplo, un mensaje de la versión anterior). */
+    fun byKey(key: String): Int? = choices.firstOrNull { it.first == key }?.third
 
     /** Un color por persona, según el nombre de quien manda el mensaje. */
     val avatars = intArrayOf(
@@ -115,12 +135,19 @@ fun withRipple(content: Drawable): Drawable =
     RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), content, null)
 
 /** Botón pensado para control remoto: se ilumina cuando tiene el foco. */
-fun Context.tvButton(label: String, onClick: () -> Unit): TextView {
+fun Context.tvButton(label: String, focusFill: Int = Pal.accent, onClick: () -> Unit): TextView {
     val ctx = this
+    // Con colores claros (amarillo, verde) el texto blanco no se lee: se pasa a oscuro cuando tiene el foco
+    val focusedText = if (ColorUtils.calculateLuminance(focusFill) > 0.45) 0xFF111111.toInt() else Pal.text
     return TextView(ctx).apply {
         text = label
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-        setTextColor(Pal.text)
+        setTextColor(
+            ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
+                intArrayOf(focusedText, Pal.text)
+            )
+        )
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         setPadding(ctx.dp(32), ctx.dp(16), ctx.dp(32), ctx.dp(16))
@@ -129,7 +156,7 @@ fun Context.tvButton(label: String, onClick: () -> Unit): TextView {
         background = StateListDrawable().apply {
             addState(
                 intArrayOf(android.R.attr.state_focused),
-                roundedBg(Pal.accent, ctx.dp(16), Pal.text, ctx.dp(3))
+                roundedBg(focusFill, ctx.dp(16), Pal.text, ctx.dp(3))
             )
             addState(intArrayOf(), roundedBg(Pal.cardHi, ctx.dp(16)))
         }

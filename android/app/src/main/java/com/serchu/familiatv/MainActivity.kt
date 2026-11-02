@@ -78,6 +78,7 @@ class MainActivity : Activity() {
     private lateinit var durationChip: TextView
     private lateinit var replyChip: TextView
     private lateinit var replyHint: TextView
+    private lateinit var colorRow: LinearLayout
     private lateinit var sendBtn: TextView
     private lateinit var feedback: TextView
     private var sending = false
@@ -272,6 +273,14 @@ class MainActivity : Activity() {
         options.addView(replyChip, lp(wrap, wrap))
         root.addView(options, lp(match, wrap, top = 14))
 
+        // Color del mensaje en la tele
+        root.addView(label("Color del mensaje", 13f, Pal.muted), lp(wrap, wrap, top = 16, bottom = 8))
+        colorRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        root.addView(colorRow, lp(match, wrap))
+
         replyHint = label(
             "Con respuesta, el mensaje toma el control de la tele hasta que alguien elija OK, Voy o Ahora no.",
             12f,
@@ -320,6 +329,7 @@ class MainActivity : Activity() {
 
         renderProfile()
         renderOptions()
+        renderColors()
         updateSendState()
 
         return ScrollView(this).apply {
@@ -348,6 +358,29 @@ class MainActivity : Activity() {
         replyChip.text = if (wantReply) "Pedir respuesta: sí" else "Pedir respuesta: no"
         replyChip.background = withRipple(roundedBg(if (wantReply) Pal.accent else Pal.cardHi, dp(20)))
         replyHint.visibility = if (wantReply) View.VISIBLE else View.GONE
+    }
+
+    private fun renderColors() {
+        colorRow.removeAllViews()
+        val selected = Profile.color(this)
+        Pal.choices.forEach { (key, name, color) ->
+            val on = key == selected
+            val dot = TextView(this).apply {
+                text = if (on) "✓" else ""
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                setTextColor(0xFF111111.toInt())
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                contentDescription = name
+                isClickable = true
+                background = roundedBg(color, dp(24), if (on) Pal.text else Color.TRANSPARENT, if (on) dp(3) else 0)
+                setOnClickListener {
+                    Profile.setColor(this@MainActivity, key)
+                    renderColors()
+                }
+            }
+            colorRow.addView(dot, lp(dp(48), dp(48)).apply { rightMargin = dp(14) })
+        }
     }
 
     private fun updateSendState() {
@@ -478,6 +511,7 @@ class MainActivity : Activity() {
             .put("from", Profile.name(this))
             .put("text", text)
             .put("duration", if (longDuration) "larga" else "normal")
+            .put("color", Profile.color(this))
             .put("reply", askedReply)
         Profile.avatar(this)?.let { json.put("avatar", it) }
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

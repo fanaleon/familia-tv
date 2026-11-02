@@ -96,7 +96,8 @@ class RelayService : Service() {
             ts = o.optLong("ts", System.currentTimeMillis()),
             avatar = o.optString("avatar").takeIf { it.isNotBlank() },
             longStay = o.optString("duration") == "larga",
-            needsReply = o.optBoolean("reply", false)
+            needsReply = o.optBoolean("reply", false),
+            color = o.optString("color")
         )
         main.post {
             RelayState.lastFrom = msg.from
@@ -129,7 +130,8 @@ class RelayService : Service() {
                 "Así se van a ver los mensajes. Todo funciona."
             },
             ts = System.currentTimeMillis(),
-            needsReply = withReply
+            needsReply = withReply,
+            color = Profile.color(applicationContext)
         )
         main.post { presenter.show(m) }
     }

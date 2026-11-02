@@ -9,8 +9,9 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -42,7 +43,8 @@ class Msg(
     val ts: Long,
     val avatar: String? = null,
     val longStay: Boolean = false,
-    val needsReply: Boolean = false
+    val needsReply: Boolean = false,
+    val color: String = ""
 )
 
 object Notifs {
@@ -90,6 +92,8 @@ private class KeyFrame(context: Context, private val onBack: () -> Unit) : Frame
         return super.dispatchKeyEvent(event)
     }
 }
+
+private const val PIPE_RATE = 22050
 
 /**
  * Muestra los mensajes como una tarjeta arriba de la pantalla, encima de lo que se esté viendo.
@@ -269,9 +273,13 @@ class OverlayPresenter(
             translationY = -ctx.dp(60).toFloat()
         }
 
+        // Color que eligió quien mandó el mensaje (los de la versión anterior no traen y quedan en violeta)
+        val accent = Pal.byKey(m.color) ?: Pal.accent
+        val nameColor = if (Pal.byKey(m.color) != null) accent else Pal.accentSoft
+
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(0xF2161830.toInt(), ctx.dp(28), 0x556C5CE7, ctx.dp(2))
+            background = roundedBg(0xF2161830.toInt(), ctx.dp(28), (accent and 0x00FFFFFF) or 0x88000000.toInt(), ctx.dp(2))
             setPadding(ctx.dp(28), ctx.dp(26), ctx.dp(28), ctx.dp(22))
         }
 
@@ -282,7 +290,7 @@ class OverlayPresenter(
         col.addView(TextView(ctx).apply {
             text = m.from
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            setTextColor(Pal.accentSoft)
+            setTextColor(nameColor)
             typeface = Typeface.DEFAULT_BOLD
         })
         col.addView(TextView(ctx).apply {
@@ -314,7 +322,7 @@ class OverlayPresenter(
         if (m.needsReply) {
             val btnRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
             choices.forEachIndexed { i, (choice, label) ->
-                val b = ctx.tvButton(label) { answer(choice, label) }
+                val b = ctx.tvButton(label, accent) { answer(choice, label) }
                 if (i == 0) firstButton = b
                 btnRow.addView(
                     b,
@@ -327,7 +335,7 @@ class OverlayPresenter(
 
         // Barrita que se va achicando: muestra cuánto falta para que desaparezca
         val bar = View(ctx).apply {
-            background = roundedBg(Pal.accent, ctx.dp(3))
+            background = roundedBg(accent, ctx.dp(3))
             pivotX = 0f
         }
         card.addView(
@@ -352,8 +360,9 @@ class OverlayPresenter(
 
     /**
      * Aviso sonoro pensado para cuando la tele está con música o un video y nadie mira la pantalla:
-     * tres pitidos por el mismo canal que la música (sigue el volumen de la tele) y, mientras
-     * suenan, le pide al sistema que baje un poco lo que se esté reproduciendo.
+     * un "silbido de tubería" (dos barridos de tono descendente, estilo videojuego retro) por el mismo
+     * canal que la música, así que sigue el volumen de la tele. Mientras suena, le pide al sistema
+     * que baje un poco lo que se esté reproduciendo.
      */
     private fun chime() {
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -361,15 +370,50 @@ class OverlayPresenter(
             takeFocus(am)
         } catch (e: Exception) { /* sin foco igual suena */ }
         try {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 250)
-            main.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP, 250) }, 400)
-            main.postDelayed({ tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 450) }, 800)
+            val data = pipeSound
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(PIPE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(data.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            track.write(data, 0, data.size)
+            track.play()
             main.postDelayed({
-                tone.release()
+                try { track.release() } catch (e: Exception) { /* ya estaba liberado */ }
                 try { dropFocus(am) } catch (e: Exception) { /* nada que soltar */ }
-            }, 1_800)
+            }, 1_700)
         } catch (e: Exception) { /* sin sonido */ }
+    }
+
+    // Se genera una sola vez: onda cuadrada cuyo tono baja de 1400 Hz a 350 Hz, dos veces seguidas
+    private val pipeSound: ShortArray by lazy {
+        val sweep = PIPE_RATE * 450 / 1000
+        val gap = PIPE_RATE * 120 / 1000
+        val out = ShortArray(sweep * 2 + gap)
+        var phase = 0.0
+        for (round in 0..1) {
+            val base = round * (sweep + gap)
+            for (i in 0 until sweep) {
+                val p = i.toDouble() / sweep
+                phase += 2 * Math.PI * (1400.0 - 1050.0 * p) / PIPE_RATE
+                val square = if (Math.sin(phase) >= 0) 1.0 else -1.0
+                val fade = if (p > 0.85) (1.0 - p) / 0.15 else 1.0 // baja el volumen al final para evitar el "clic"
+                out[base + i] = (square * fade * 0.5 * Short.MAX_VALUE).toInt().toShort()
+            }
+        }
+        out
     }
 
     @Suppress("DEPRECATION")

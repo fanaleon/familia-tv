@@ -19,7 +19,7 @@ android {
         targetSdk = 34
         // En GitHub Actions sube solo con cada build, así el APK nuevo siempre pisa al viejo.
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "1.1"
+        versionName = "1.2"
 
         buildConfigField("String", "RELAY_URL", "\"${cfg("RELAY_URL", "https://CAMBIAR.up.railway.app")}\"")
         buildConfigField("String", "RELAY_TOKEN", "\"${cfg("RELAY_TOKEN", "CAMBIAR")}\"")
