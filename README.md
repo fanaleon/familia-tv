@@ -77,6 +77,16 @@ adb shell dumpsys deviceidle whitelist +com.serchu.familiatv
 - **Diseño nuevo:** fondo con degradado, tarjetas de vidrio, anillo de color en la foto, botones con animación, ícono nuevo, reloj en la pantalla de inicio de la tele y tarjetas de mensajes rediseñadas.
 - **Límite:** es una pantalla que tapa todo, no un apagado. Quien tenga el control puede forzar la detención de la app desde los ajustes de Android; para cerrar eso usá un perfil restringido o Google Family Link.
 
+## Cobro con Solana Pay (prototipo de una familia)
+
+En la tele, el botón **Plan** abre una pantalla con un **QR de pago**: **5 USDC**, o su equivalente en **SOL** al precio del momento. Se escanea con Phantom, Solflare u otra billetera. El servidor mira la red de Solana, comprueba que a la billetera de cobro le llegó al menos el monto pedido y extiende la licencia **30 días**. Cada transacción se acepta una sola vez y el QR vence a los 15 minutos.
+
+- **Licencia:** arranca con **7 días de prueba**. Por defecto el plan **no es obligatorio**, así la app sigue funcionando; para exigirlo, definí `REQUIRE_LICENSE=1` (con la licencia vencida el servidor responde 402 a mensajes y bloqueos, pero siempre deja desbloquear).
+- **Persistencia:** la licencia se guarda en `DATA_DIR/licencia.json`. En Railway conviene montar un *Volume* y apuntar `DATA_DIR` a él (por ejemplo `/data`); sin volumen se pierde en cada despliegue.
+- **Variables (todas opcionales):** `PAY_WALLET` (billetera de cobro), `SOLANA_RPC_URL` (por defecto el RPC público; para uso real conviene uno propio, como el plan gratis de Helius), `USDC_MINT` (por defecto el de mainnet), `PRICE_USD` (5), `LICENSE_DAYS` (30), `TRIAL_DAYS` (7), `PAY_COMMITMENT` (`confirmed` o `finalized`), `SOL_USD_FIXED` (precio fijo de SOL, para pruebas).
+- **Probar sin gastar:** apuntá `SOLANA_RPC_URL` a devnet y poné `USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`.
+- **Límite:** no hay cobro automático mensual (Solana Pay no lo tiene): cada mes se vuelve a pagar desde el mismo botón.
+
 ### Actualizar desde la 1.0
 Reemplazá los archivos del proyecto, hacé `git add -A`, `git commit -m "v1.1"` y `git push`. Railway se actualiza solo y GitHub Actions compila el APK nuevo; se instala encima del viejo (en la tele también). Los móviles/tele con la app vieja siguen funcionando con el servidor nuevo.
 

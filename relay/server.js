@@ -2,6 +2,8 @@
 //   POST /send                         (móvil) -> guarda el mensaje y lo empuja a la TV
 //   GET  /status                       (móvil) -> { tv, pendientes, bloqueo, pin }
 //   POST /control                      (móvil) -> bloquea / desbloquea la TV (PIN opcional)
+//   POST /pay/create                   (TV)    -> pedido de pago con Solana Pay { metodo: "usdc" | "sol" }
+//   GET  /pay/status[?id=<pago>]       (TV)    -> estado del plan y, si se pide, de ese pago
 //   WS   /ws?role=tv                   (TV)    -> recibe mensajes; manda {type:"ack"} y {type:"reply"}
 //   WS   /ws?role=phone&uid=<uid>      (móvil) -> recibe las respuestas que da la TV
 // Todo (menos /health) exige el token: header "Authorization: Bearer <TOKEN>".
@@ -9,6 +11,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { createPay } = require('./pay');
 
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TOKEN;
@@ -38,6 +41,8 @@ const PARENT_PIN = (process.env.PARENT_PIN || '').trim();
 const TZ_OFFSET_MIN = Number.isFinite(Number(process.env.TZ_OFFSET_MIN)) && process.env.TZ_OFFSET_MIN !== undefined
   ? Number(process.env.TZ_OFFSET_MIN)
   : -180;
+
+const pay = createPay();         // cobro con Solana Pay + licencia (ver pay.js)
 
 const pending = [];              // mensajes para la TV hasta que haga ack
 let freeze = null;               // bloqueo activo: { endsAt, label, by }
@@ -172,7 +177,29 @@ const server = http.createServer(async (req, res) => {
       pendientes: pending.length,
       bloqueo: freezeInfo(),
       pin: PARENT_PIN !== '',
+      plan: pay.plan(),
     });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/pay/status') {
+    const id = url.searchParams.get('id');
+    const pago = id ? pay.get(id) : null;
+    return json(res, 200, { ok: true, plan: pay.plan(), pago });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/pay/create') {
+    let data;
+    try {
+      data = JSON.parse(await readBody(req, 1024));
+    } catch (e) {
+      return json(res, 400, { ok: false, error: 'json_invalido' });
+    }
+    try {
+      const pago = await pay.create(data && data.metodo);
+      return json(res, 200, { ok: true, plan: pay.plan(), pago });
+    } catch (e) {
+      return json(res, e.code || 500, { ok: false, error: e.message });
+    }
   }
 
   if (req.method === 'POST' && url.pathname === '/control') {
@@ -183,6 +210,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { ok: false, error: 'json_invalido' });
     }
     if (data === null || typeof data !== 'object') return json(res, 400, { ok: false, error: 'json_invalido' });
+
+    // Plan vencido (solo si la licencia es obligatoria). Desbloquear siempre se puede.
+    if (data.action !== 'unfreeze' && !pay.allowed()) return json(res, 402, { ok: false, error: 'licencia_vencida' });
 
     // PIN de padres (si está configurado)
     if (PARENT_PIN) {
@@ -248,6 +278,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { ok: false, error: 'json_invalido' });
     }
     if (data === null || typeof data !== 'object') return json(res, 400, { ok: false, error: 'json_invalido' });
+    if (!pay.allowed()) return json(res, 402, { ok: false, error: 'licencia_vencida' });
 
     const text = typeof data.text === 'string' ? data.text.trim() : '';
     const from = (typeof data.from === 'string' ? data.from.trim() : '') || 'Familia';

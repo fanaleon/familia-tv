@@ -6,3 +6,4 @@ android/local.properties
 *.apk
 .idea/
 .DS_Store
+relay/data/

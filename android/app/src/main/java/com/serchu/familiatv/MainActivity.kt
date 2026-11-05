@@ -14,6 +14,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
@@ -40,12 +41,17 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextClock
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -56,6 +62,8 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -116,6 +124,18 @@ class MainActivity : Activity() {
     private lateinit var tvLast: TextView
     private lateinit var tvPermBox: LinearLayout
     private var tvPulse: ObjectAnimator? = null
+    private lateinit var tvRootFrame: FrameLayout
+    private lateinit var planBtn: TextView
+    private var tvTicks = 0
+
+    // pantalla de pago (Solana Pay)
+    private var payOverlay: FrameLayout? = null
+    private var payQr: ImageView? = null
+    private var payAmount: TextView? = null
+    private var payStatus: TextView? = null
+    private var payId: String? = null
+    private var payExpiresAt = 0L // en SystemClock.elapsedRealtime()
+    private var payDone = false
 
     private val phonePoll: Runnable = object : Runnable {
         override fun run() {
@@ -138,9 +158,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private val payPoll: Runnable = object : Runnable {
+        override fun run() {
+            pollPay()
+            main.postDelayed(this, 3_000)
+        }
+    }
+
     private val tvTick: Runnable = object : Runnable {
         override fun run() {
             refreshTv()
+            if (tvTicks++ % 60 == 0) fetchPlan()
             main.postDelayed(this, 1_000)
         }
     }
@@ -161,6 +189,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (isTv) {
+            tvTicks = 0
             main.post(tvTick)
         } else {
             main.post(phonePoll)
@@ -171,9 +200,15 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         sessionPin = null
+        main.removeCallbacks(payPoll)
         main.removeCallbacks(tvTick)
         main.removeCallbacks(phonePoll)
         main.removeCallbacks(phoneTick)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (payOverlay != null) closePay() else super.onBackPressed()
     }
 
     override fun onDestroy() {
@@ -738,6 +773,7 @@ class MainActivity : Activity() {
                     when {
                         code in 200..299 -> sendDone(true, delivered, askedReply, null)
                         code == 401 -> sendDone(false, false, askedReply, "El código de acceso no coincide con el del servidor.")
+                        code == 402 -> sendDone(false, false, askedReply, "El plan venció. Activalo desde la tele (botón Plan).")
                         else -> sendDone(false, false, askedReply, "El servidor respondió con un error ($code).")
                     }
                 }
@@ -898,6 +934,7 @@ class MainActivity : Activity() {
                 }
             }
             code == 401 -> showFeedback("El código de acceso no coincide con el del servidor.", Pal.bad)
+            code == 402 -> showFeedback("El plan venció. Activalo desde la tele (botón Plan).", Pal.bad)
             code == 403 && (error == "pin_requerido" || error == "pin_incorrecto") -> {
                 sessionPin = null
                 askPin(if (error == "pin_incorrecto") "PIN incorrecto. Probá de nuevo." else "Escribí el PIN de padres.") { p ->
@@ -962,6 +999,7 @@ class MainActivity : Activity() {
 
     private fun buildTv(): View {
         val rootFrame = FrameLayout(this).apply { background = appBackground() }
+        tvRootFrame = rootFrame
 
         // Centro: logo, nombre y estado. Compacto para que entre en cualquier tele.
         val root = LinearLayout(this).apply {
@@ -1049,7 +1087,14 @@ class MainActivity : Activity() {
             soundBtn.text = soundButtonText()
             Sounds.play(this) // se escucha cómo suena el que quedó elegido
         }
-        bottom.addView(soundBtn, lp(wrap, wrap, bottom = 14))
+        planBtn = tvButton("\uD83D\uDCB3  Plan") { openPay() }
+        val extras = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        extras.addView(soundBtn, lp(wrap, wrap).apply { rightMargin = dp(14) })
+        extras.addView(planBtn, lp(wrap, wrap))
+        bottom.addView(extras, lp(wrap, wrap, bottom = 14))
 
         val tests = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1105,6 +1150,217 @@ class MainActivity : Activity() {
         )
 
         return rootFrame
+    }
+
+    // ---------------------------------------------------------- plan y pago (TV)
+
+    /** Pregunta al servidor cómo está el plan y lo muestra en el botón. */
+    private fun fetchPlan() {
+        if (!Cfg.configured) return
+        Net.http.newCall(relayRequest("/pay/status").build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.use { it.body?.string().orEmpty() }
+                val plan = runCatching { JSONObject(raw).optJSONObject("plan") }.getOrNull() ?: return
+                runOnUiThread { showPlan(plan) }
+            }
+        })
+    }
+
+    private fun showPlan(plan: JSONObject) {
+        val hasta = if (plan.isNull("hasta")) 0L else plan.optLong("hasta", 0L)
+        val fecha = if (hasta > 0) SimpleDateFormat("d/M", Locale("es")).format(Date(hasta)) else ""
+        val usd = plan.optInt("precio_usd", 5)
+        val days = if (hasta > 0) ((hasta - System.currentTimeMillis()) / 86_400_000L).toInt() + 1 else 0
+        planBtn.text = when (plan.optString("estado")) {
+            "activo" -> "\uD83D\uDCB3  Plan activo hasta $fecha"
+            "prueba" -> "\uD83D\uDCB3  Prueba: $days ${if (days == 1) "día" else "días"}"
+            "vencido" -> "\uD83D\uDCB3  Plan vencido: activar"
+            else -> "\uD83D\uDCB3  Plan ($usd USDC)"
+        }
+    }
+
+    private fun qrDrawable(text: String): BitmapDrawable {
+        val hints = mapOf<EncodeHintType, Any>(
+            EncodeHintType.MARGIN to 1,
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M
+        )
+        val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, hints)
+        val w = m.width
+        val h = m.height
+        val px = IntArray(w * h) { i -> if (m.get(i % w, i / w)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }
+        val bmp = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        return BitmapDrawable(resources, bmp).apply { isFilterBitmap = false } // módulos nítidos al agrandar
+    }
+
+    private fun payButton(text: String, onClick: () -> Unit): TextView =
+        tvButton(text, onClick = onClick).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+        }
+
+    private fun openPay() {
+        if (payOverlay != null) return
+        if (!Cfg.configured) {
+            toast("Falta configurar RELAY_URL y RELAY_TOKEN.")
+            return
+        }
+        payDone = false
+        val overlay = FrameLayout(this).apply {
+            background = appBackground()
+            isClickable = true
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(56), dp(24), dp(56), dp(24))
+        }
+
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        left.addView(label("\uD83D\uDCB3  Activá tu plan", 34f, Pal.text, bold = true), lp(wrap, wrap))
+        left.addView(
+            label("Escaneá el QR con tu billetera de Solana (Phantom, Solflare…)", 18f, Pal.muted),
+            lp(wrap, wrap, top = 6)
+        )
+        val amount = label("", 30f, Pal.accentSoft, bold = true)
+        left.addView(amount, lp(wrap, wrap, top = 16))
+        val status = label("Preparando el pago…", 20f, Pal.text).apply { maxLines = 3 }
+        left.addView(status, lp(wrap, wrap, top = 6))
+
+        val methods = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val usdcBtn = payButton("Pagar con USDC") { createPay("usdc") }
+        val solBtn = payButton("Pagar con SOL") { createPay("sol") }
+        methods.addView(usdcBtn, lp(wrap, wrap).apply { rightMargin = dp(12) })
+        methods.addView(solBtn, lp(wrap, wrap))
+        left.addView(methods, lp(wrap, wrap, top = 16))
+        left.addView(payButton("Cerrar") { closePay() }, lp(wrap, wrap, top = 10))
+        row.addView(left, LinearLayout.LayoutParams(0, wrap, 1f))
+
+        // El QR va sobre blanco, grande y con margen, para que cualquier cámara lo lea
+        val qrSize = minOf(dp(300), resources.displayMetrics.heightPixels - dp(120))
+        val card = FrameLayout(this).apply {
+            background = roundedBg(0xFFFFFFFF.toInt(), dp(20))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+        }
+        val qr = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        card.addView(qr, FrameLayout.LayoutParams(qrSize, qrSize))
+        row.addView(card, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(32) })
+
+        overlay.addView(row, FrameLayout.LayoutParams(match, match))
+        // Lo de atrás se oculta para que el control remoto no pueda mover el foco hasta allá
+        for (i in 0 until tvRootFrame.childCount) tvRootFrame.getChildAt(i).visibility = View.INVISIBLE
+        tvRootFrame.addView(overlay, FrameLayout.LayoutParams(match, match))
+        payOverlay = overlay
+        payQr = qr
+        payAmount = amount
+        payStatus = status
+        usdcBtn.requestFocus()
+        createPay("usdc")
+    }
+
+    private fun closePay() {
+        main.removeCallbacks(payPoll)
+        payOverlay?.let { tvRootFrame.removeView(it) }
+        for (i in 0 until tvRootFrame.childCount) tvRootFrame.getChildAt(i).visibility = View.VISIBLE
+        payOverlay = null
+        payQr = null
+        payAmount = null
+        payStatus = null
+        payId = null
+        planBtn.requestFocus()
+        fetchPlan()
+    }
+
+    /** Pide un QR nuevo al servidor para pagar con [metodo] ("usdc" o "sol"). */
+    private fun createPay(metodo: String) {
+        main.removeCallbacks(payPoll)
+        payId = null
+        payDone = false
+        payQr?.setImageDrawable(null)
+        payAmount?.text = ""
+        payStatus?.setTextColor(Pal.text)
+        payStatus?.text = "Preparando el pago…"
+        val body = JSONObject().put("metodo", metodo).toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        Net.http.newCall(relayRequest("/pay/create").post(body).build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { payMessage("No hay conexión con el servidor. Probá de nuevo.", Pal.bad) }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.use { it.body?.string().orEmpty() }
+                val code = response.code
+                val o = runCatching { JSONObject(raw) }.getOrNull()
+                runOnUiThread {
+                    val pago = o?.optJSONObject("pago")
+                    if (code in 200..299 && pago != null) {
+                        showPayRequest(pago)
+                    } else {
+                        when (o?.optString("error")) {
+                            "precio_no_disponible" -> payMessage("No pude averiguar el precio de SOL. Probá con USDC.", Pal.bad)
+                            "pagos_desactivados" -> payMessage("Los pagos todavía no están configurados.", Pal.bad)
+                            else -> payMessage("No se pudo generar el pago ($code).", Pal.bad)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun payMessage(text: String, color: Int) {
+        payStatus?.setTextColor(color)
+        payStatus?.text = text
+    }
+
+    private fun showPayRequest(pago: JSONObject) {
+        if (payOverlay == null) return
+        payId = pago.optString("id")
+        payExpiresAt = SystemClock.elapsedRealtime() + pago.optLong("vence_en", 0L)
+        payQr?.setImageDrawable(qrDrawable(pago.optString("url")))
+        val moneda = pago.optString("moneda")
+        payAmount?.text = "Pagá ${pago.optString("monto")} $moneda"
+        payMessage("Esperando el pago…", Pal.text)
+        main.postDelayed(payPoll, 3_000)
+    }
+
+    private fun pollPay() {
+        val id = payId ?: return
+        if (payOverlay == null || payDone) return
+        Net.http.newCall(relayRequest("/pay/status?id=$id").build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.use { it.body?.string().orEmpty() }
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return
+                runOnUiThread { onPayStatus(id, o) }
+            }
+        })
+    }
+
+    private fun onPayStatus(id: String, o: JSONObject) {
+        if (payOverlay == null || id != payId || payDone) return
+        o.optJSONObject("plan")?.let { showPlan(it) }
+        when (o.optJSONObject("pago")?.optString("estado")) {
+            "pagado" -> {
+                payDone = true
+                main.removeCallbacks(payPoll)
+                val hasta = o.optJSONObject("plan")?.optLong("hasta", 0L) ?: 0L
+                val fecha = if (hasta > 0) SimpleDateFormat("d 'de' MMMM", Locale("es")).format(Date(hasta)) else ""
+                payQr?.setImageDrawable(null)
+                payAmount?.text = "✅  ¡Pago recibido!"
+                payMessage("Gracias. Tu plan está activo hasta el $fecha.", Pal.ok)
+            }
+            "vencido" -> {
+                main.removeCallbacks(payPoll)
+                payQr?.setImageDrawable(null)
+                payMessage("Este QR venció. Tocá una moneda para generar otro.", Pal.warn)
+            }
+            else -> {
+                val left = ((payExpiresAt - SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)
+                payStatus?.text = "Esperando el pago… (el QR vence en ${left / 60}:${(left % 60).toString().padStart(2, '0')})"
+            }
+        }
     }
 
     private fun soundButtonText(): String = "\uD83D\uDD14  Sonido: ${Sounds.label(this)}"
