@@ -947,7 +947,7 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(64), dp(24), dp(64), dp(110)) // abajo queda lugar para los botones
+            setPadding(dp(64), dp(20), dp(64), dp(170)) // abajo queda lugar para los botones
         }
 
         val logo = TextView(this).apply {
@@ -956,9 +956,9 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             background = gradientBg(dp(26), intArrayOf(0xFF9A8BFF.toInt(), 0xFF3A2AB5.toInt()))
         }
-        root.addView(logo, LinearLayout.LayoutParams(dp(96), dp(96)))
+        root.addView(logo, LinearLayout.LayoutParams(dp(84), dp(84)))
 
-        root.addView(label("Familia TV", 46f, Pal.text, bold = true), lp(wrap, wrap, top = 14))
+        root.addView(label("Familia TV", 42f, Pal.text, bold = true), lp(wrap, wrap, top = 12))
         root.addView(
             label("Los mensajes de la familia aparecen directo en tu pantalla", 20f, Pal.muted),
             lp(wrap, wrap, top = 2)
@@ -1017,7 +1017,20 @@ class MainActivity : Activity() {
 
         rootFrame.addView(root, FrameLayout.LayoutParams(match, match))
 
-        // Botones de prueba: anclados abajo, aparte del resto para que nada los achique
+        // Botones: anclados abajo, aparte del resto para que nada los achique
+        val bottom = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        val soundBtn = tvButton("") { }
+        soundBtn.text = soundButtonText()
+        soundBtn.setOnClickListener {
+            Sounds.next(this)
+            soundBtn.text = soundButtonText()
+            Sounds.play(this) // se escucha cómo suena el que quedó elegido
+        }
+        bottom.addView(soundBtn, lp(wrap, wrap, bottom = 14))
+
         val tests = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -1028,8 +1041,9 @@ class MainActivity : Activity() {
         tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testFreeze, lp(wrap, wrap))
+        bottom.addView(tests, lp(wrap, wrap))
         rootFrame.addView(
-            tests,
+            bottom,
             FrameLayout.LayoutParams(wrap, wrap, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
                 bottomMargin = dp(40)
             }
@@ -1072,6 +1086,8 @@ class MainActivity : Activity() {
 
         return rootFrame
     }
+
+    private fun soundButtonText(): String = "\uD83D\uDD14  Sonido: ${Sounds.label(this)}"
 
     private fun refreshTv() {
         val (t, c) = when {
