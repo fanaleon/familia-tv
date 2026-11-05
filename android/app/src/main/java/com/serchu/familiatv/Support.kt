@@ -1,5 +1,6 @@
 package com.serchu.familiatv
 
+import android.annotation.SuppressLint
 import android.app.UiModeManager
 import android.content.Context
 import android.content.res.ColorStateList
@@ -15,9 +16,12 @@ import android.graphics.drawable.StateListDrawable
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import androidx.core.graphics.ColorUtils
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import okhttp3.OkHttpClient
@@ -201,3 +205,70 @@ fun Context.avatarView(name: String, base64: String?, sizeDp: Int): View {
         }
     }
 }
+
+// ---------------------------------------------------------------- aspecto
+
+/** Fondo de las pantallas: degradado oscuro con un toque de violeta. */
+fun appBackground(): GradientDrawable =
+    GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(0xFF0B0C1F.toInt(), 0xFF160F3C.toInt(), 0xFF0B0C1F.toInt())
+    )
+
+/** Degradado de varios colores con esquinas redondeadas. */
+fun gradientBg(
+    radiusPx: Int,
+    colors: IntArray,
+    orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TL_BR
+): GradientDrawable =
+    GradientDrawable(orientation, colors).apply { cornerRadius = radiusPx.toFloat() }
+
+/** Tarjeta tipo vidrio: semitransparente, con borde suave. [tint] tiñe el borde. */
+fun glassBg(radiusPx: Int, strokePx: Int, tint: Int = 0): GradientDrawable =
+    GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        intArrayOf(0xE61F2145.toInt(), 0xE6171936.toInt())
+    ).apply {
+        cornerRadius = radiusPx.toFloat()
+        setStroke(strokePx, if (tint != 0) withAlpha(tint, 0x66) else 0x22FFFFFF)
+    }
+
+/** El mismo color con otra transparencia (alpha de 0 a 255). */
+fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
+
+fun lighten(color: Int, amount: Float): Int = ColorUtils.blendARGB(color, Color.WHITE, amount)
+
+fun darken(color: Int, amount: Float): Int = ColorUtils.blendARGB(color, Color.BLACK, amount)
+
+/** Al tocarlo se achica un poquito, como un botón de verdad. No interfiere con el clic. */
+@SuppressLint("ClickableViewAccessibility")
+fun View.pressable() {
+    setOnTouchListener { v, e ->
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).start()
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+        }
+        false
+    }
+}
+
+/** Avatar con un anillo de color alrededor. El tamaño lo pone quien lo agrega a su layout. */
+fun Context.avatarRing(name: String, base64: String?, sizeDp: Int, ring: Int): View {
+    val pad = dp(3)
+    val ringBg = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        intArrayOf(lighten(ring, 0.3f), ring, darken(ring, 0.3f))
+    )
+    ringBg.shape = GradientDrawable.OVAL
+    val inner = avatarView(name, base64, sizeDp - 8)
+    val frame = FrameLayout(this)
+    frame.background = ringBg
+    frame.setPadding(pad, pad, pad, pad)
+    frame.addView(inner, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    return frame
+}
+
+/** Color de texto que se lee bien sobre [background]: oscuro si el fondo es claro (amarillo, verde). */
+fun onColor(background: Int): Int =
+    if (ColorUtils.calculateLuminance(background) > 0.45) 0xFF111111.toInt() else Color.WHITE

@@ -69,6 +69,14 @@ adb shell dumpsys deviceidle whitelist +com.serchu.familiatv
 - **Respuestas:** *Pedir respuesta: sí* muestra en la tele los botones **OK / Voy / Ahora no**. Quien tenga el control elige uno y a quien mandó le llega una notificación. Si nadie contesta en 3 minutos (o cierran con Atrás), le avisa «Nadie respondió». Para que los botones aparezcan hace falta el permiso de la TV del paso 6.
 - En el móvil la app deja una notificación mínima fija: es lo que la mantiene conectada para recibir las respuestas. Aceptá el permiso de notificaciones cuando lo pida.
 
+## Novedades de la versión 1.3
+
+- **Control de la tele (bloqueo):** en el móvil, tarjeta *Control de la tele* con **15 minutos**, **1 hora** o **Hasta las 7:00**. La tele muestra una pantalla de descanso con cuenta regresiva, se silencia y se pausa lo que se reproduzca. Se desbloquea sola al terminar el tiempo, o a mano con *Desbloquear ahora*. El fin del bloqueo queda guardado en la tele: si se corta internet o se reinicia la app, sigue.
+- **Quién puede bloquear:** al tocar un botón, el móvil pide huella, cara, patrón o PIN del teléfono. Además, si definís la variable `PARENT_PIN` en Railway (por ejemplo 4 dígitos), el servidor exige ese PIN en cada orden y frena 10 minutos después de 5 intentos fallidos.
+- **Zona horaria de "hasta las 7:00":** por defecto Argentina (UTC-3). Se cambia con la variable `TZ_OFFSET_MIN` (minutos respecto de UTC, por ejemplo `-180`).
+- **Diseño nuevo:** fondo con degradado, tarjetas de vidrio, anillo de color en la foto, botones con animación, ícono nuevo, reloj en la pantalla de inicio de la tele y tarjetas de mensajes rediseñadas.
+- **Límite:** es una pantalla que tapa todo, no un apagado. Quien tenga el control puede forzar la detención de la app desde los ajustes de Android; para cerrar eso usá un perfil restringido o Google Family Link.
+
 ### Actualizar desde la 1.0
 Reemplazá los archivos del proyecto, hacé `git add -A`, `git commit -m "v1.1"` y `git push`. Railway se actualiza solo y GitHub Actions compila el APK nuevo; se instala encima del viejo (en la tele también). Los móviles/tele con la app vieja siguen funcionando con el servidor nuevo.
 

@@ -24,11 +24,13 @@ class RelayService : Service() {
     companion object {
         const val ACTION_TEST = "com.serchu.familiatv.TEST"
         const val ACTION_TEST_REPLY = "com.serchu.familiatv.TEST_REPLY"
+        const val ACTION_TEST_FREEZE = "com.serchu.familiatv.TEST_FREEZE"
         private const val NOTIF_ID = 1
     }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var presenter: OverlayPresenter
+    private lateinit var freeze: FreezeController
     private lateinit var link: RelayLink
     private var wakeLock: PowerManager.WakeLock? = null
     private val seen = LinkedHashSet<String>()
@@ -38,6 +40,7 @@ class RelayService : Service() {
     override fun onCreate() {
         super.onCreate()
         presenter = OverlayPresenter(applicationContext) { msg, choice -> sendReply(msg, choice) }
+        freeze = FreezeController(applicationContext)
         link = RelayLink(
             applicationContext,
             "role=tv",
@@ -50,6 +53,7 @@ class RelayService : Service() {
         Notifs.ensureChannels(this)
         goForeground(if (Cfg.configured) "Conectando…" else "App sin configurar")
         acquireWakeLock()
+        freeze.restore() // si había un bloqueo en curso (reinicio de la app), lo retoma
         if (Cfg.configured) link.start()
     }
 
@@ -57,6 +61,8 @@ class RelayService : Service() {
         when (intent?.action) {
             ACTION_TEST -> showTest(false)
             ACTION_TEST_REPLY -> showTest(true)
+            // La prueba nunca pisa un bloqueo real: si ya hay uno en curso, no hace nada
+            ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(10_000L, "Prueba de bloqueo", Cfg.senderName) }
         }
         return START_STICKY
     }
@@ -67,13 +73,28 @@ class RelayService : Service() {
         RelayState.connected = false
         wakeLock?.let { if (it.isHeld) it.release() }
         presenter.clear()
+        freeze.release()
         super.onDestroy()
     }
 
     // ---------- mensajes ----------
 
     private fun handle(o: JSONObject) {
-        if (o.optString("type") != "msg") return
+        when (o.optString("type")) {
+            "freeze" -> {
+                val endsIn = o.optLong("endsIn")
+                val label = o.optString("label")
+                val by = o.optString("by")
+                main.post { freeze.start(endsIn, label, by) }
+                return
+            }
+            "unfreeze" -> {
+                main.post { freeze.stop() }
+                return
+            }
+            "msg" -> { /* sigue abajo */ }
+            else -> return
+        }
         val id = o.optString("id")
         val body = o.optString("text")
         if (id.isBlank() || body.isBlank()) return

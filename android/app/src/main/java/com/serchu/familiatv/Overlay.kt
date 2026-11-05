@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -23,7 +24,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -180,8 +181,8 @@ class OverlayPresenter(
         answered = false
         chime()
         if (m.needsReply) main.postDelayed(repeatChime, 20_000)
-        built.root.animate().alpha(1f).translationY(0f)
-            .setDuration(350).setInterpolator(DecelerateInterpolator()).start()
+        built.root.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+            .setDuration(450).setInterpolator(OvershootInterpolator(1.05f)).start()
         built.bar.animate().scaleX(0f)
             .setDuration(duration).setInterpolator(LinearInterpolator()).start()
         built.first?.let { f -> built.root.post { f.requestFocus() } }
@@ -267,52 +268,80 @@ class OverlayPresenter(
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val match = ViewGroup.LayoutParams.MATCH_PARENT
 
+        // Color que eligió quien mandó el mensaje (los de la versión anterior no traen y quedan en violeta)
+        val accent = Pal.byKey(m.color) ?: Pal.accent
+        val accentText = lighten(accent, 0.25f)
+
         val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
             setPadding(ctx.dp(48), ctx.dp(32), ctx.dp(48), 0)
             alpha = 0f
-            translationY = -ctx.dp(60).toFloat()
+            translationY = -ctx.dp(70).toFloat()
+            scaleX = 0.96f
+            scaleY = 0.96f
         }
-
-        // Color que eligió quien mandó el mensaje (los de la versión anterior no traen y quedan en violeta)
-        val accent = Pal.byKey(m.color) ?: Pal.accent
-        val nameColor = if (Pal.byKey(m.color) != null) accent else Pal.accentSoft
 
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBg(0xF2161830.toInt(), ctx.dp(28), (accent and 0x00FFFFFF) or 0x88000000.toInt(), ctx.dp(2))
-            setPadding(ctx.dp(28), ctx.dp(26), ctx.dp(28), ctx.dp(22))
+            background = glassBg(ctx.dp(30), ctx.dp(2), accent)
+            setPadding(ctx.dp(30), ctx.dp(24), ctx.dp(30), ctx.dp(22))
         }
 
+        // Línea de color arriba de la tarjeta
+        card.addView(
+            View(ctx).apply {
+                background = gradientBg(
+                    ctx.dp(2),
+                    intArrayOf(accentText, accent, withAlpha(accent, 0x00)),
+                    GradientDrawable.Orientation.LEFT_RIGHT
+                )
+            },
+            LinearLayout.LayoutParams(match, ctx.dp(4)).apply { bottomMargin = ctx.dp(20) }
+        )
+
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(ctx.avatarView(m.from, m.avatar, 72), LinearLayout.LayoutParams(ctx.dp(72), ctx.dp(72)))
+        row.addView(ctx.avatarRing(m.from, m.avatar, 88, accent), LinearLayout.LayoutParams(ctx.dp(88), ctx.dp(88)))
 
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(TextView(ctx).apply {
-            text = m.from
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            setTextColor(nameColor)
-            typeface = Typeface.DEFAULT_BOLD
-        })
+
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(
+            TextView(ctx).apply {
+                text = m.from
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                setTextColor(accentText)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(ctx.dp(16), ctx.dp(6), ctx.dp(16), ctx.dp(6))
+                background = roundedBg(withAlpha(accent, 0x33), ctx.dp(18))
+            },
+            LinearLayout.LayoutParams(wrap, wrap)
+        )
+        ageText(m.ts)?.let { age ->
+            header.addView(
+                TextView(ctx).apply {
+                    text = age
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextColor(Pal.muted)
+                },
+                LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = ctx.dp(14) }
+            )
+        }
+        col.addView(header, LinearLayout.LayoutParams(wrap, wrap))
+
         col.addView(TextView(ctx).apply {
             text = m.text
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 38f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f)
             setTextColor(Pal.text)
             setLineSpacing(0f, 1.1f)
             maxLines = 6
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, ctx.dp(4), 0, 0)
+            setPadding(0, ctx.dp(10), 0, 0)
         })
-        ageText(m.ts)?.let { age ->
-            col.addView(TextView(ctx).apply {
-                text = age
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setTextColor(Pal.muted)
-                setPadding(0, ctx.dp(8), 0, 0)
-            })
-        }
         row.addView(
             col,
-            LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = ctx.dp(22) }
+            LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = ctx.dp(24) }
         )
         card.addView(row, LinearLayout.LayoutParams(match, wrap))
 
@@ -329,18 +358,22 @@ class OverlayPresenter(
                     LinearLayout.LayoutParams(0, wrap, 1f).apply { if (i > 0) marginStart = ctx.dp(16) }
                 )
             }
-            card.addView(btnRow, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(22) })
+            card.addView(btnRow, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(24) })
             buttons = btnRow
         }
 
         // Barrita que se va achicando: muestra cuánto falta para que desaparezca
         val bar = View(ctx).apply {
-            background = roundedBg(accent, ctx.dp(3))
+            background = gradientBg(
+                ctx.dp(3),
+                intArrayOf(accent, accentText),
+                GradientDrawable.Orientation.LEFT_RIGHT
+            )
             pivotX = 0f
         }
         card.addView(
             bar,
-            LinearLayout.LayoutParams(match, ctx.dp(5)).apply { topMargin = ctx.dp(20) }
+            LinearLayout.LayoutParams(match, ctx.dp(5)).apply { topMargin = ctx.dp(22) }
         )
 
         outer.addView(card, FrameLayout.LayoutParams(match, wrap))
