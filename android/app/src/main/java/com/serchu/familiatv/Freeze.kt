@@ -188,7 +188,7 @@ class FreezeController(private val ctx: Context) {
 
         val moon = TextView(ctx).apply {
             text = "🌙"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 84f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 64f)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -196,40 +196,40 @@ class FreezeController(private val ctx: Context) {
                 setStroke(ctx.dp(2), 0x33FFFFFF)
             }
         }
-        column.addView(moon, LinearLayout.LayoutParams(ctx.dp(190), ctx.dp(190)))
+        column.addView(moon, LinearLayout.LayoutParams(ctx.dp(140), ctx.dp(140)))
 
         column.addView(
             TextView(ctx).apply {
                 text = "Hora de descansar"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 52f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 42f)
                 setTextColor(Pal.text)
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
             },
-            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(36) }
+            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(24) }
         )
 
         val subtitle = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             setTextColor(Pal.muted)
             gravity = Gravity.CENTER
         }
-        column.addView(subtitle, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(8) })
+        column.addView(subtitle, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(6) })
 
         val countdown = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 88f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 72f)
             setTextColor(Pal.accentSoft)
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
         }
-        column.addView(countdown, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(28) })
+        column.addView(countdown, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(18) })
 
         val footer = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(Pal.muted)
             gravity = Gravity.CENTER
         }
-        column.addView(footer, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(40) })
+        column.addView(footer, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(24) })
 
         root.addView(
             column,

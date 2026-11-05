@@ -943,42 +943,43 @@ class MainActivity : Activity() {
     private fun buildTv(): View {
         val rootFrame = FrameLayout(this).apply { background = appBackground() }
 
+        // Centro: logo, nombre y estado. Compacto para que entre en cualquier tele.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(64), dp(32), dp(64), dp(32))
+            setPadding(dp(64), dp(24), dp(64), dp(110)) // abajo queda lugar para los botones
         }
 
         val logo = TextView(this).apply {
-            text = "📺"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 58f)
+            text = "\uD83D\uDCFA"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 44f)
             gravity = Gravity.CENTER
-            background = gradientBg(dp(34), intArrayOf(0xFF9A8BFF.toInt(), 0xFF3A2AB5.toInt()))
+            background = gradientBg(dp(26), intArrayOf(0xFF9A8BFF.toInt(), 0xFF3A2AB5.toInt()))
         }
-        root.addView(logo, LinearLayout.LayoutParams(dp(130), dp(130)))
+        root.addView(logo, LinearLayout.LayoutParams(dp(96), dp(96)))
 
-        root.addView(label("Familia TV", 56f, Pal.text, bold = true), lp(wrap, wrap, top = 22))
+        root.addView(label("Familia TV", 46f, Pal.text, bold = true), lp(wrap, wrap, top = 14))
         root.addView(
-            label("Los mensajes de la familia aparecen directo en tu pantalla", 22f, Pal.muted),
-            lp(wrap, wrap, top = 4)
+            label("Los mensajes de la familia aparecen directo en tu pantalla", 20f, Pal.muted),
+            lp(wrap, wrap, top = 2)
         )
 
         // Estado de la conexión, con un puntito que late
         val statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = glassBg(dp(40), dp(1))
-            setPadding(dp(30), dp(14), dp(34), dp(14))
+            background = glassBg(dp(32), dp(1))
+            setPadding(dp(26), dp(10), dp(30), dp(10))
         }
         tvDotBg = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Pal.muted)
         }
         tvDot = View(this).apply { background = tvDotBg }
-        statusCard.addView(tvDot, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(16) })
-        tvStatus = label("", 28f, Pal.text)
+        statusCard.addView(tvDot, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(14) })
+        tvStatus = label("", 24f, Pal.text)
         statusCard.addView(tvStatus, LinearLayout.LayoutParams(wrap, wrap))
-        root.addView(statusCard, lp(wrap, wrap, top = 34))
+        root.addView(statusCard, lp(wrap, wrap, top = 22))
         tvPulse = ObjectAnimator.ofFloat(tvDot, "alpha", 1f, 0.3f).apply {
             duration = 1_100
             repeatMode = ValueAnimator.REVERSE
@@ -987,33 +988,36 @@ class MainActivity : Activity() {
             start()
         }
 
-        tvLast = label("", 22f, Pal.muted).apply {
+        tvLast = label("", 18f, Pal.muted).apply {
             gravity = Gravity.CENTER
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
-        root.addView(tvLast, lp(wrap, wrap, top = 14))
+        root.addView(tvLast, lp(wrap, wrap, top = 10))
 
         tvPermBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(Pal.card, dp(20), Pal.warn, dp(2))
-            setPadding(dp(28), dp(20), dp(28), dp(20))
+            setPadding(dp(24), dp(14), dp(24), dp(14))
             visibility = View.GONE
         }
         tvPermBox.addView(
-            label("Falta un permiso para mostrar los mensajes sobre lo que estás viendo.", 22f, Pal.warn, bold = true),
+            label("Falta un permiso para mostrar los mensajes sobre lo que estás viendo.", 18f, Pal.warn, bold = true),
             lp(wrap, wrap)
         )
-        tvPermBox.addView(label("Desde una PC con adb:", 18f, Pal.muted), lp(wrap, wrap, top = 8))
+        tvPermBox.addView(label("Desde una PC con adb:", 15f, Pal.muted), lp(wrap, wrap, top = 6))
         tvPermBox.addView(
-            label("adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow", 18f, Pal.text).apply {
+            label("adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow", 15f, Pal.text).apply {
                 typeface = Typeface.MONOSPACE
             },
-            lp(wrap, wrap, top = 4)
+            lp(wrap, wrap, top = 2)
         )
-        tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 16))
-        root.addView(tvPermBox, lp(wrap, wrap, top = 26))
+        tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 10))
+        root.addView(tvPermBox, lp(wrap, wrap, top = 14))
 
+        rootFrame.addView(root, FrameLayout.LayoutParams(match, match))
+
+        // Botones de prueba: anclados abajo, aparte del resto para que nada los achique
         val tests = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -1021,13 +1025,16 @@ class MainActivity : Activity() {
         val test = tvButton("Probar mensaje") { sendTest(RelayService.ACTION_TEST) }
         val testReply = tvButton("Probar con respuesta") { sendTest(RelayService.ACTION_TEST_REPLY) }
         val testFreeze = tvButton("Probar bloqueo (10 s)") { sendTest(RelayService.ACTION_TEST_FREEZE) }
-        tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(16) })
-        tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(16) })
+        tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(14) })
+        tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testFreeze, lp(wrap, wrap))
-        root.addView(tests, lp(wrap, wrap, top = 28))
+        rootFrame.addView(
+            tests,
+            FrameLayout.LayoutParams(wrap, wrap, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = dp(40)
+            }
+        )
         test.requestFocus()
-
-        rootFrame.addView(root, FrameLayout.LayoutParams(match, match))
 
         // Reloj y fecha, arriba a la derecha
         val clockBox = LinearLayout(this).apply {
@@ -1038,7 +1045,7 @@ class MainActivity : Activity() {
             TextClock(this).apply {
                 format12Hour = "HH:mm"
                 format24Hour = "HH:mm"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 44f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 38f)
                 setTextColor(Pal.text)
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.END
@@ -1049,7 +1056,7 @@ class MainActivity : Activity() {
             TextClock(this).apply {
                 format12Hour = "EEEE d 'de' MMMM"
                 format24Hour = "EEEE d 'de' MMMM"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 setTextColor(Pal.muted)
                 gravity = Gravity.END
             },
@@ -1058,7 +1065,7 @@ class MainActivity : Activity() {
         rootFrame.addView(
             clockBox,
             FrameLayout.LayoutParams(wrap, wrap, Gravity.TOP or Gravity.END).apply {
-                topMargin = dp(32)
+                topMargin = dp(28)
                 rightMargin = dp(56)
             }
         )
