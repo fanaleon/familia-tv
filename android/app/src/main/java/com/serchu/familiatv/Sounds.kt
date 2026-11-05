@@ -50,13 +50,13 @@ object Sounds {
     }
 
     /** Hace sonar el sonido elegido (o [key] si se indica). */
-    fun play(ctx: Context, key: String = currentKey(ctx)) {
+    fun play(ctx: Context, key: String = currentKey(ctx), exclusive: Boolean = false) {
         val data = cache.getOrPut(key) { build(key) }
         if (data.isEmpty()) return // "Silencio"
 
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         try {
-            takeFocus(am)
+            takeFocus(am, exclusive)
         } catch (e: Exception) { /* sin foco igual suena */ }
         try {
             val track = AudioTrack.Builder()
@@ -87,9 +87,9 @@ object Sounds {
     }
 
     @Suppress("DEPRECATION")
-    private fun takeFocus(am: AudioManager) {
+    private fun takeFocus(am: AudioManager, exclusive: Boolean) {
         if (Build.VERSION.SDK_INT >= 26) {
-            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val req = AudioFocusRequest.Builder(gain(exclusive))
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
@@ -100,9 +100,14 @@ object Sounds {
             focusRequest = req
             am.requestAudioFocus(req)
         } else {
-            am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, gain(exclusive))
         }
     }
+
+    /** En exclusiva, lo demás se pausa mientras suena; si no, solo baja un poco. */
+    private fun gain(exclusive: Boolean): Int =
+        if (exclusive) AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+        else AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
 
     @Suppress("DEPRECATION")
     private fun dropFocus(am: AudioManager) {
@@ -120,22 +125,39 @@ object Sounds {
         "campana" -> campana()
         "gota" -> gota()
         "silbido" -> silbido()
-        "toc" -> toc()
+        "guau" -> guau()
         else -> ShortArray(0)
     }
 
-    /** Golpe de nudillos en madera (lo usa el papá de la pantalla de bloqueo; no es un sonido de aviso). */
-    private fun toc(): ShortArray {
-        val buf = FloatArray(RATE / 4)
-        val rnd = java.util.Random(7)
+    /**
+     * Ladrido de perro (lo usa el perro guardián de la pantalla de bloqueo; no es un sonido de aviso).
+     * Un tono grave que arranca más agudo y baja, con armónicos reforzados donde un perro tiene sus
+     * "vocales" (que pasan de una "a" abierta a una "u") y un poco de aire al principio.
+     */
+    private fun guau(): ShortArray {
+        val buf = FloatArray(RATE * 32 / 100)
+        val rnd = java.util.Random(11)
+        var ph = 0.0
+        var peak = 0.0
         for (i in buf.indices) {
             val t = i.toDouble() / RATE
-            val body = Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t / 0.030) +
-                0.6 * Math.sin(2 * Math.PI * 410 * t) * Math.exp(-t / 0.018) +
-                0.3 * Math.sin(2 * Math.PI * 740 * t) * Math.exp(-t / 0.010)
-            val click = if (t < 0.004) (rnd.nextDouble() * 2 - 1) * (1 - t / 0.004) else 0.0
-            buf[i] = (0.75 * body + 0.5 * click).toFloat()
+            val f0 = 330.0 - 120.0 * Math.min(1.0, t / 0.2) + 30.0 * Math.exp(-t / 0.02)
+            ph += 2 * Math.PI * f0 / RATE
+            val formant = 900.0 - 400.0 * Math.min(1.0, t / 0.2)
+            var v = 0.0
+            for (k in 1..14) {
+                val fk = f0 * k
+                val a = Math.exp(-Math.pow((fk - formant) / 450.0, 2.0)) +
+                    0.55 * Math.exp(-Math.pow((fk - 2000.0) / 800.0, 2.0))
+                v += a * Math.sin(k * ph) / Math.pow(k.toDouble(), 0.3)
+            }
+            val env = (1.0 - Math.exp(-t / 0.006)) * Math.exp(-t / 0.10)
+            val noise = (rnd.nextDouble() * 2 - 1) * 0.5 * Math.exp(-t / 0.03)
+            val x = (v + noise) * env
+            buf[i] = x.toFloat()
+            if (Math.abs(x) > peak) peak = Math.abs(x)
         }
+        if (peak > 0.0) for (i in buf.indices) buf[i] = (buf[i] / peak * 0.95).toFloat()
         return toPcm(buf)
     }
 

@@ -25,7 +25,7 @@ import java.util.Locale
 
 /** Ventana que se queda con TODAS las teclas del control mientras la tele está bloqueada. */
 private class KeyEater(context: Context) : FrameLayout(context) {
-    /** Se avisa cada vez que alguien toca un botón (el papá se despierta a retar). */
+    /** Se avisa cada vez que alguien toca un botón (el perro guardián viene a ladrar). */
     var onKey: (() -> Unit)? = null
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -168,16 +168,17 @@ class FreezeController(private val ctx: Context) {
     private val remute = Runnable { if (running) mute() }
 
     /**
-     * Golpe del papá en la pantalla. Con el volumen silenciado no se oiría (en las teles todos los
-     * sonidos comparten el mismo volumen), así que se des-silencia un instante y se vuelve a silenciar.
+     * Ladrido del perro guardián. Con el volumen silenciado no se oiría (en las teles todos los sonidos
+     * comparten el mismo volumen), así que se des-silencia un instante, se toma el foco de audio en
+     * exclusiva (lo demás se pausa mientras suena) y se vuelve a silenciar.
      */
-    private fun knock() {
+    private fun bark() {
         try {
             audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
         } catch (e: Exception) { /* volumen fijo */ }
-        Sounds.play(ctx, "toc")
+        Sounds.play(ctx, "guau", exclusive = true)
         main.removeCallbacks(remute)
-        main.postDelayed(remute, 700)
+        main.postDelayed(remute, 900)
     }
 
     private fun pauseMedia() {
@@ -195,9 +196,9 @@ class FreezeController(private val ctx: Context) {
 
         // El contenido está pensado para ~480 dp de alto. Si esta tele tiene menos, todo se achica
         // proporcionalmente para que nunca quede cortado arriba o abajo.
-        // Abajo se reserva un franja para el papá que pasea, así que el contenido usa el resto.
+        // Abajo se reserva un franja para el perro guardián, así que el contenido usa el resto.
         val screenH = ctx.resources.displayMetrics.heightPixels.toFloat()
-        val dadZone = (screenH * DadView.ZONE).toInt()
+        val dadZone = (screenH * DogView.ZONE).toInt()
         val scale = ((screenH - dadZone) / ctx.dp(480)).coerceIn(0.5f, 1f)
         fun sz(base: Float): Float = base * scale
         fun d(base: Int): Int = (ctx.dp(base) * scale).toInt()
@@ -269,13 +270,12 @@ class FreezeController(private val ctx: Context) {
             }
         )
 
-        // El papá: del color de quien bloquea, igual que su avatar en el móvil
-        val shirt = Pal.avatars[(by.hashCode() and 0x7fffffff) % Pal.avatars.size]
-        val dad = DadView(ctx, shirt)
-        dad.onKnock = { knock() }
-        root.onKey = { dad.poke() }
+        // El perro guardián: se echa en su cucha y, si tocan un botón, viene a ladrar (máx. 3 veces por bloqueo)
+        val dog = DogView(ctx)
+        dog.onBark = { bark() }
+        root.onKey = { dog.poke() }
         root.addView(
-            dad,
+            dog,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
 
