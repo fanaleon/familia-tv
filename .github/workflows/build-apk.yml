@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -34,3 +36,18 @@ jobs:
           name: familia-tv-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Solo en la rama version-papa: deja el APK en una rama aparte para poder bajarlo directo
+      - name: Guardar el APK en la rama apk-papa
+        if: github.ref == 'refs/heads/version-papa'
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk /tmp/familia-tv-papa.apk
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan apk-papa
+          git rm -rf -q --cached .
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp /tmp/familia-tv-papa.apk familia-tv-papa.apk
+          git add -f familia-tv-papa.apk
+          git commit -q -m "APK versión papá"
+          git push -f origin apk-papa
