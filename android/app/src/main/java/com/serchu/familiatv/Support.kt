@@ -88,6 +88,16 @@ object Profile {
     fun setColor(ctx: Context, key: String) {
         prefs(ctx).edit().putString("color", key).apply()
     }
+
+    /** Hora elegida para "Bloquear hasta las…" (por defecto 7:00). Devuelve hora y minuto. */
+    fun untilTime(ctx: Context): Pair<Int, Int> {
+        val p = prefs(ctx)
+        return Pair(p.getInt("until_h", 7).coerceIn(0, 23), p.getInt("until_m", 0).coerceIn(0, 59))
+    }
+
+    fun setUntilTime(ctx: Context, hour: Int, minute: Int) {
+        prefs(ctx).edit().putInt("until_h", hour).putInt("until_m", minute).apply()
+    }
 }
 
 /** Paleta de la app. */

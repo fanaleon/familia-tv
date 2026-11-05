@@ -472,12 +472,30 @@ class MainActivity : Activity() {
         top.addView(c15, LinearLayout.LayoutParams(0, wrap, 1f).apply { rightMargin = dp(8) })
         top.addView(c60, LinearLayout.LayoutParams(0, wrap, 1f))
         controlIdle.addView(top, lp(match, wrap))
-        val night = chip("🌙  Hasta las 7:00", 16f).apply {
-            setOnClickListener { askControl("freeze", "until", 0) }
+        val night = chip("", 16f).apply {
             background = withRipple(gradientBg(dp(20), intArrayOf(0xFF5B8CFF.toInt(), 0xFF3A2AB5.toInt())))
             setTextColor(Color.WHITE)
         }
+        fun refreshNight() {
+            val (h, m) = Profile.untilTime(this)
+            night.text = "🌙  Hasta las ${untilLabel(h, m)}"
+            night.setOnClickListener { askControl("freeze", "until", 0, h, m) }
+        }
+        refreshNight()
         controlIdle.addView(night, lp(match, wrap, top = 8))
+        val pick = chip("⏰  Elegir otra hora…", 14f)
+        styleControlChip(pick)
+        pick.setOnClickListener {
+            val (h, m) = Profile.untilTime(this)
+            android.app.TimePickerDialog(this, { _, hh, mm ->
+                Profile.setUntilTime(this, hh, mm)
+                refreshNight()
+                askControl("freeze", "until", 0, hh, mm)
+            }, h, m, true).apply {
+                setTitle("La tele vuelve a las…")
+            }.show()
+        }
+        controlIdle.addView(pick, lp(match, wrap, top = 8))
         card.addView(controlIdle, lp(match, wrap))
 
         // Tele bloqueada: cuenta regresiva y botón para desbloquear
@@ -501,6 +519,8 @@ class MainActivity : Activity() {
         card.addView(controlActive, lp(match, wrap))
         return card
     }
+
+    private fun untilLabel(h: Int, m: Int): String = "$h:${m.toString().padStart(2, '0')}"
 
     private fun styleControlChip(c: TextView) {
         c.background = withRipple(roundedBg(0x265B8CFF, dp(20), 0x665B8CFF, dp(1)))
@@ -825,21 +845,21 @@ class MainActivity : Activity() {
     }
 
     /** Primero se confirma la identidad en el móvil; recién ahí se manda la orden. */
-    private fun askControl(action: String, mode: String, minutes: Int) {
+    private fun askControl(action: String, mode: String, minutes: Int, hour: Int = 7, minute: Int = 0) {
         if (!Cfg.configured) {
             showFeedback("Falta configurar RELAY_URL y RELAY_TOKEN.", Pal.bad)
             return
         }
-        authenticate { sendControl(action, mode, minutes, sessionPin) }
+        authenticate { sendControl(action, mode, minutes, sessionPin, hour, minute) }
     }
 
-    private fun sendControl(action: String, mode: String, minutes: Int, pin: String?) {
+    private fun sendControl(action: String, mode: String, minutes: Int, pin: String?, hour: Int = 7, minute: Int = 0) {
         val json = JSONObject()
             .put("action", action)
             .put("from", Profile.name(this))
         if (action == "freeze") {
             json.put("mode", mode)
-            if (mode == "until") json.put("hour", 7) else json.put("minutes", minutes)
+            if (mode == "until") json.put("hour", hour).put("minute", minute) else json.put("minutes", minutes)
         }
         if (pin != null) json.put("pin", pin)
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -853,12 +873,12 @@ class MainActivity : Activity() {
                 val raw = response.use { it.body?.string().orEmpty() }
                 val code = response.code
                 val o = runCatching { JSONObject(raw) }.getOrNull()
-                runOnUiThread { controlDone(code, o, action, mode, minutes, pin) }
+                runOnUiThread { controlDone(code, o, action, mode, minutes, pin, hour, minute) }
             }
         })
     }
 
-    private fun controlDone(code: Int, o: JSONObject?, action: String, mode: String, minutes: Int, pin: String?) {
+    private fun controlDone(code: Int, o: JSONObject?, action: String, mode: String, minutes: Int, pin: String?, hour: Int = 7, minute: Int = 0) {
         val error = o?.optString("error").orEmpty()
         when {
             code in 200..299 -> {
@@ -881,7 +901,7 @@ class MainActivity : Activity() {
             code == 403 && (error == "pin_requerido" || error == "pin_incorrecto") -> {
                 sessionPin = null
                 askPin(if (error == "pin_incorrecto") "PIN incorrecto. Probá de nuevo." else "Escribí el PIN de padres.") { p ->
-                    sendControl(action, mode, minutes, p)
+                    sendControl(action, mode, minutes, p, hour, minute)
                 }
             }
             code == 429 -> {
@@ -1037,7 +1057,7 @@ class MainActivity : Activity() {
         }
         val test = tvButton("Probar mensaje") { sendTest(RelayService.ACTION_TEST) }
         val testReply = tvButton("Probar con respuesta") { sendTest(RelayService.ACTION_TEST_REPLY) }
-        val testFreeze = tvButton("Probar bloqueo (10 s)") { sendTest(RelayService.ACTION_TEST_FREEZE) }
+        val testFreeze = tvButton("Probar bloqueo (45 s)") { sendTest(RelayService.ACTION_TEST_FREEZE) }
         tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testFreeze, lp(wrap, wrap))

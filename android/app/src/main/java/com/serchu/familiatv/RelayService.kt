@@ -62,7 +62,7 @@ class RelayService : Service() {
             ACTION_TEST -> showTest(false)
             ACTION_TEST_REPLY -> showTest(true)
             // La prueba nunca pisa un bloqueo real: si ya hay uno en curso, no hace nada
-            ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(10_000L, "Prueba de bloqueo", Cfg.senderName) }
+            ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(45_000L, "Prueba de bloqueo", Cfg.senderName) }
         }
         return START_STICKY
     }

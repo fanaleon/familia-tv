@@ -123,11 +123,11 @@ function activeFreeze() {
   return freeze;
 }
 
-// Próxima vez que en el reloj local sean las `hour`:00 (si faltan menos de 1 min, la del día siguiente)
-function nextLocalHour(hour) {
+// Próxima vez que en el reloj local sean las `hour`:`minute` (si faltan menos de 1 min, la del día siguiente)
+function nextLocalTime(hour, minute) {
   const off = TZ_OFFSET_MIN * 60000;
   const local = new Date(Date.now() + off);
-  const target = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), hour, 0, 0);
+  const target = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), hour, minute, 0);
   let end = target - off;
   if (end <= Date.now() + 60000) end += 24 * 60 * 60 * 1000;
   return end;
@@ -219,8 +219,9 @@ const server = http.createServer(async (req, res) => {
       let label;
       if (data.mode === 'until') {
         const hour = Number.isInteger(data.hour) && data.hour >= 0 && data.hour <= 23 ? data.hour : 7;
-        endsAt = nextLocalHour(hour);
-        label = `La tele vuelve a las ${hour}:00`;
+        const minute = Number.isInteger(data.minute) && data.minute >= 0 && data.minute <= 59 ? data.minute : 0;
+        endsAt = nextLocalTime(hour, minute);
+        label = `La tele vuelve a las ${hour}:${String(minute).padStart(2, '0')}`;
       } else {
         const minutes = Number.isInteger(data.minutes) && data.minutes >= 1 && data.minutes <= MAX_FREEZE_MIN
           ? data.minutes

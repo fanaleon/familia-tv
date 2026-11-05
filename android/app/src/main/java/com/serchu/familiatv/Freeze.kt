@@ -25,7 +25,13 @@ import java.util.Locale
 
 /** Ventana que se queda con TODAS las teclas del control mientras la tele está bloqueada. */
 private class KeyEater(context: Context) : FrameLayout(context) {
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean = true
+    /** Se avisa cada vez que alguien toca un botón (el papá se despierta a retar). */
+    var onKey: (() -> Unit)? = null
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) onKey?.invoke()
+        return true
+    }
 }
 
 /**
@@ -98,7 +104,7 @@ class FreezeController(private val ctx: Context) {
         deadline = until
         running = true
         ticks = 0
-        if (view == null) show()
+        if (view == null) show(by)
         subtitleView?.text = label
         footerView?.text = if (by.isNotBlank()) "Bloqueado por $by" else ""
         mute()
@@ -159,6 +165,21 @@ class FreezeController(private val ctx: Context) {
         prefs.edit().putBoolean("muted", false).apply()
     }
 
+    private val remute = Runnable { if (running) mute() }
+
+    /**
+     * Golpe del papá en la pantalla. Con el volumen silenciado no se oiría (en las teles todos los
+     * sonidos comparten el mismo volumen), así que se des-silencia un instante y se vuelve a silenciar.
+     */
+    private fun knock() {
+        try {
+            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+        } catch (e: Exception) { /* volumen fijo */ }
+        Sounds.play(ctx, "toc")
+        main.removeCallbacks(remute)
+        main.postDelayed(remute, 700)
+    }
+
     private fun pauseMedia() {
         try {
             audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
@@ -167,10 +188,20 @@ class FreezeController(private val ctx: Context) {
     }
 
     @Suppress("DEPRECATION")
-    private fun show() {
+    private fun show(by: String) {
         if (!Settings.canDrawOverlays(ctx)) return // sin permiso solo se silencia y se pausa
 
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+
+        // El contenido está pensado para ~480 dp de alto. Si esta tele tiene menos, todo se achica
+        // proporcionalmente para que nunca quede cortado arriba o abajo.
+        // Abajo se reserva un franja para el papá que pasea, así que el contenido usa el resto.
+        val screenH = ctx.resources.displayMetrics.heightPixels.toFloat()
+        val dadZone = (screenH * DadView.ZONE).toInt()
+        val scale = ((screenH - dadZone) / ctx.dp(480)).coerceIn(0.5f, 1f)
+        fun sz(base: Float): Float = base * scale
+        fun d(base: Int): Int = (ctx.dp(base) * scale).toInt()
+
         val root = KeyEater(ctx).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
@@ -188,51 +219,63 @@ class FreezeController(private val ctx: Context) {
 
         val moon = TextView(ctx).apply {
             text = "🌙"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 64f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(64f))
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0x1AFFFFFF)
-                setStroke(ctx.dp(2), 0x33FFFFFF)
+                setStroke(maxOf(1, d(2)), 0x33FFFFFF)
             }
         }
-        column.addView(moon, LinearLayout.LayoutParams(ctx.dp(140), ctx.dp(140)))
+        column.addView(moon, LinearLayout.LayoutParams(d(140), d(140)))
 
         column.addView(
             TextView(ctx).apply {
                 text = "Hora de descansar"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 42f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(42f))
                 setTextColor(Pal.text)
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
             },
-            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(24) }
+            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = d(24) }
         )
 
         val subtitle = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(24f))
             setTextColor(Pal.muted)
             gravity = Gravity.CENTER
         }
-        column.addView(subtitle, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(6) })
+        column.addView(subtitle, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = d(6) })
 
         val countdown = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 72f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(72f))
             setTextColor(Pal.accentSoft)
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
         }
-        column.addView(countdown, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(18) })
+        column.addView(countdown, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = d(18) })
 
         val footer = TextView(ctx).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(18f))
             setTextColor(Pal.muted)
             gravity = Gravity.CENTER
         }
-        column.addView(footer, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(24) })
+        column.addView(footer, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = d(24) })
 
         root.addView(
             column,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                bottomMargin = dadZone
+            }
+        )
+
+        // El papá: del color de quien bloquea, igual que su avatar en el móvil
+        val shirt = Pal.avatars[(by.hashCode() and 0x7fffffff) % Pal.avatars.size]
+        val dad = DadView(ctx, shirt)
+        dad.onKnock = { knock() }
+        root.onKey = { dad.poke() }
+        root.addView(
+            dad,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
 
@@ -245,7 +288,8 @@ class FreezeController(private val ctx: Context) {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             type,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.OPAQUE
         )
         try {

@@ -120,7 +120,23 @@ object Sounds {
         "campana" -> campana()
         "gota" -> gota()
         "silbido" -> silbido()
+        "toc" -> toc()
         else -> ShortArray(0)
+    }
+
+    /** Golpe de nudillos en madera (lo usa el papá de la pantalla de bloqueo; no es un sonido de aviso). */
+    private fun toc(): ShortArray {
+        val buf = FloatArray(RATE / 4)
+        val rnd = java.util.Random(7)
+        for (i in buf.indices) {
+            val t = i.toDouble() / RATE
+            val body = Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t / 0.030) +
+                0.6 * Math.sin(2 * Math.PI * 410 * t) * Math.exp(-t / 0.018) +
+                0.3 * Math.sin(2 * Math.PI * 740 * t) * Math.exp(-t / 0.010)
+            val click = if (t < 0.004) (rnd.nextDouble() * 2 - 1) * (1 - t / 0.004) else 0.0
+            buf[i] = (0.75 * body + 0.5 * click).toFloat()
+        }
+        return toPcm(buf)
     }
 
     /** Convierte el mezclado (de -1 a 1) a audio de 16 bits, con tope para que nunca sature. */
