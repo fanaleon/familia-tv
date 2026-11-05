@@ -125,6 +125,7 @@ class MainActivity : Activity() {
     private lateinit var tvPermBox: LinearLayout
     private var tvPulse: ObjectAnimator? = null
     private lateinit var tvRootFrame: FrameLayout
+    private var tvHeader: List<View> = emptyList()
     private lateinit var planBtn: TextView
     private var tvTicks = 0
 
@@ -1016,11 +1017,12 @@ class MainActivity : Activity() {
         }
         root.addView(logo, LinearLayout.LayoutParams(dp(84), dp(84)))
 
-        root.addView(label("Familia TV", 42f, Pal.text, bold = true), lp(wrap, wrap, top = 12))
-        root.addView(
-            label("Los mensajes de la familia aparecen directo en tu pantalla", 20f, Pal.muted),
-            lp(wrap, wrap, top = 2)
-        )
+        val titleView = label("Familia TV", 42f, Pal.text, bold = true)
+        val subtitleView = label("Los mensajes de la familia aparecen directo en tu pantalla", 20f, Pal.muted)
+        root.addView(titleView, lp(wrap, wrap, top = 12))
+        root.addView(subtitleView, lp(wrap, wrap, top = 2))
+        // Si falta el permiso, el aviso necesita lugar: el logo y la frase se esconden hasta que se dé
+        tvHeader = listOf(logo, subtitleView)
 
         // Estado de la conexión, con un puntito que late
         val statusCard = LinearLayout(this).apply {
@@ -1056,22 +1058,25 @@ class MainActivity : Activity() {
         tvPermBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(Pal.card, dp(20), Pal.warn, dp(2))
-            setPadding(dp(24), dp(14), dp(24), dp(14))
+            setPadding(dp(24), dp(12), dp(24), dp(12))
             visibility = View.GONE
         }
         tvPermBox.addView(
             label("Falta un permiso para mostrar los mensajes sobre lo que estás viendo.", 18f, Pal.warn, bold = true),
             lp(wrap, wrap)
         )
-        tvPermBox.addView(label("Desde una PC con adb:", 15f, Pal.muted), lp(wrap, wrap, top = 6))
         tvPermBox.addView(
-            label("adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow", 15f, Pal.text).apply {
+            label("Tocá el botón y activá \"Mostrar sobre otras apps\" para Familia TV.", 15f, Pal.text),
+            lp(wrap, wrap, top = 4)
+        )
+        tvPermBox.addView(
+            label("Con una PC: adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow", 12f, Pal.muted).apply {
                 typeface = Typeface.MONOSPACE
             },
             lp(wrap, wrap, top = 2)
         )
-        tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 10))
-        root.addView(tvPermBox, lp(wrap, wrap, top = 14))
+        tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 8))
+        root.addView(tvPermBox, lp(wrap, wrap, top = 10))
 
         rootFrame.addView(root, FrameLayout.LayoutParams(match, match))
 
@@ -1380,7 +1385,10 @@ class MainActivity : Activity() {
             ""
         }
 
-        tvPermBox.visibility = if (Settings.canDrawOverlays(this)) View.GONE else View.VISIBLE
+        val missing = !Settings.canDrawOverlays(this)
+        tvPermBox.visibility = if (missing) View.VISIBLE else View.GONE
+        for (v in tvHeader) v.visibility = if (missing) View.GONE else View.VISIBLE
+        tvLast.visibility = if (missing) View.GONE else View.VISIBLE
     }
 
     private fun sendTest(action: String) {
@@ -1395,12 +1403,17 @@ class MainActivity : Activity() {
     }
 
     private fun openOverlaySettings() {
-        try {
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-            )
-        } catch (e: Exception) {
-            toast("Esta TV no tiene esa pantalla. Usá el comando adb de arriba.")
+        val attempts = listOf(
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        )
+        for (intent in attempts) {
+            try {
+                startActivity(intent)
+                return
+            } catch (e: Exception) { /* se prueba con la siguiente pantalla */ }
         }
+        toast("Esta TV no tiene esa pantalla. Usá el comando adb de arriba.")
     }
 }
