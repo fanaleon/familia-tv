@@ -43,7 +43,7 @@ class RelayService : Service() {
         freeze = FreezeController(applicationContext)
         link = RelayLink(
             applicationContext,
-            "role=tv",
+            "role=tv&id=" + Profile.tvId(applicationContext),
             onStateChange = { ok ->
                 RelayState.connected = ok
                 updateNotification(if (ok) "Conectada — esperando mensajes" else "Reconectando…")
@@ -90,6 +90,16 @@ class RelayService : Service() {
             }
             "unfreeze" -> {
                 main.post { freeze.stop() }
+                return
+            }
+            "hello" -> {
+                RelayState.limit = false
+                RelayState.tvName = o.optString("name")
+                return
+            }
+            "limit" -> {
+                RelayState.limit = true
+                RelayState.capacity = o.optInt("capacidad")
                 return
             }
             "msg" -> { /* sigue abajo */ }

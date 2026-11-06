@@ -79,12 +79,14 @@ adb shell dumpsys deviceidle whitelist +com.serchu.familiatv
 
 ## Cobro con Solana Pay (prototipo de una familia)
 
-En la tele, el botón **Plan** abre una pantalla con un **QR de pago**: **5 USDC**, o su equivalente en **SOL** al precio del momento. Se escanea con Phantom, Solflare u otra billetera. El servidor mira la red de Solana, comprueba que a la billetera de cobro le llegó al menos el monto pedido y extiende la licencia **30 días**. Cada transacción se acepta una sola vez y el QR vence a los 15 minutos.
+En la tele, el botón **Plan** abre una pantalla con un **QR de pago**: **5 USDC**, o su equivalente en **SOL** al precio del momento. Se escanea con Phantom, Solflare u otra billetera. El servidor mira la red de Solana, comprueba que a la billetera de cobro le llegó al menos el monto pedido y extiende la licencia **30 días** (o, si se compra el pack de TV, suma lugares). Cada transacción se acepta una sola vez y el QR vence a los 15 minutos.
 
 - **Licencia:** arranca con **7 días de prueba**. Por defecto el plan **no es obligatorio**, así la app sigue funcionando; para exigirlo, definí `REQUIRE_LICENSE=1` (con la licencia vencida el servidor responde 402 a mensajes y bloqueos, pero siempre deja desbloquear).
 - **Persistencia:** la licencia se guarda en `DATA_DIR/licencia.json`. En Railway conviene montar un *Volume* y apuntar `DATA_DIR` a él (por ejemplo `/data`); sin volumen se pierde en cada despliegue.
 - **Variables (todas opcionales):** `PAY_WALLET` (billetera de cobro), `SOLANA_RPC_URL` (por defecto el RPC público; para uso real conviene uno propio, como el plan gratis de Helius), `USDC_MINT` (por defecto el de mainnet), `PRICE_USD` (5), `LICENSE_DAYS` (30), `TRIAL_DAYS` (7), `PAY_COMMITMENT` (`confirmed` o `finalized`), `SOL_USD_FIXED` (precio fijo de SOL, para pruebas).
 - **Probar sin gastar:** apuntá `SOLANA_RPC_URL` a devnet y poné `USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`.
+- **Varias TV:** el plan incluye hasta **3 TV** por 5 USD. Para sumar más, desde la tele se compra **+3 TV por 8 USD** (cada grupo de 3 se paga aparte; es un pago único, no vence con el mes). Cada TV se vincula sola la primera vez que abre la app y ocupa su lugar aunque esté apagada; la TV de más recibe un aviso con el botón para sumar lugares. Variables: `PRICE_EXTRA_USD` (8), `TV_BASE` (3), `TV_PACK` (3).
+- **Elegir TV:** con 2 o más TV, el móvil muestra una fila «Para:» con *Todas* y cada TV. Los mensajes y los bloqueos van a todas por defecto o solo a la elegida. Mantené apretada una TV para cambiarle el nombre o quitarla (solo si está apagada; así se libera el lugar). La lista de TV se guarda en `DATA_DIR/tvs.json`.
 - **Límite:** no hay cobro automático mensual (Solana Pay no lo tiene): cada mes se vuelve a pagar desde el mismo botón.
 
 ### Actualizar desde la 1.0

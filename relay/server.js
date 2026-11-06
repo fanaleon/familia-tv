@@ -1,15 +1,19 @@
 // Relay Familia TV
-//   POST /send                         (móvil) -> guarda el mensaje y lo empuja a la TV
-//   GET  /status                       (móvil) -> { tv, pendientes, bloqueo, pin }
-//   POST /control                      (móvil) -> bloquea / desbloquea la TV (PIN opcional)
-//   POST /pay/create                   (TV)    -> pedido de pago con Solana Pay { metodo: "usdc" | "sol" }
+//   POST /send                         (móvil) -> guarda el mensaje y lo empuja a la(s) TV  { tv?: id }
+//   GET  /status                       (móvil) -> { tv, tvs[], capacidad, pendientes, bloqueo, pin, plan }
+//   POST /control                      (móvil) -> bloquea / desbloquea una TV o todas (PIN opcional)
+//   POST /tv/rename                    (móvil) -> { id, name }
+//   POST /tv/forget                    (móvil) -> { id }  (solo TV desconectadas: libera un lugar)
+//   POST /pay/create                   (TV)    -> pedido de pago { metodo: "usdc" | "sol", producto: "plan" | "extra" }
 //   GET  /pay/status[?id=<pago>]       (TV)    -> estado del plan y, si se pide, de ese pago
-//   WS   /ws?role=tv                   (TV)    -> recibe mensajes; manda {type:"ack"} y {type:"reply"}
+//   WS   /ws?role=tv&id=<id>&name=<n>  (TV)    -> recibe mensajes; manda {type:"ack"} y {type:"reply"}
 //   WS   /ws?role=phone&uid=<uid>      (móvil) -> recibe las respuestas que da la TV
 // Todo (menos /health) exige el token: header "Authorization: Bearer <TOKEN>".
 
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createPay } = require('./pay');
 
@@ -22,8 +26,10 @@ if (!TOKEN) {
 
 const MAX_TEXT = 500;            // caracteres por mensaje
 const MAX_FROM = 30;
+const MAX_TV_NAME = 24;
+const DEFAULT_TV_ID = 'tv-principal'; // para la app vieja de la TV, que no manda id
 const MAX_AVATAR = 40000;        // caracteres base64 de la foto (~30 KB)
-const MAX_PENDING = 50;          // mensajes en cola si la TV está apagada
+const MAX_PENDING = 50;          // mensajes en cola por TV si está apagada
 const MAX_REPLIES = 20;          // respuestas en cola por persona si su móvil está sin conexión
 const MAX_REPLY_QUEUES = 100;    // personas distintas con respuestas en cola
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // lo que pasa de 24 h en cola se descarta
@@ -44,11 +50,12 @@ const TZ_OFFSET_MIN = Number.isFinite(Number(process.env.TZ_OFFSET_MIN)) && proc
 
 const pay = createPay();         // cobro con Solana Pay + licencia (ver pay.js)
 
-const pending = [];              // mensajes para la TV hasta que haga ack
-let freeze = null;               // bloqueo activo: { endsAt, label, by }
 let pinFails = 0;
 let pinBlockedUntil = 0;
-let tv = null;                   // WebSocket de la TV conectada
+// TV vinculadas: id -> { id, name, firstSeen, ws, pending[], freeze }. Cada TV tiene su cola y su bloqueo.
+// La lista (id, nombre) se guarda en disco: una TV apagada sigue ocupando su lugar.
+const tvs = new Map();
+const tvsFile = path.join(path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data')), 'tvs.json');
 const phones = new Map();        // uid -> WebSocket del móvil de esa persona
 const replies = new Map();       // uid -> respuestas pendientes de entregar a ese móvil
 
@@ -88,12 +95,46 @@ function readBody(req, limit) {
 
 const isOpen = (ws) => ws !== null && ws !== undefined && ws.readyState === ws.OPEN;
 
+// ---------- TV vinculadas ----------
+function loadTvs() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(tvsFile, 'utf8'));
+    for (const t of (raw && raw.tvs) || []) {
+      if (t && UID_RE.test(String(t.id))) {
+        tvs.set(t.id, { id: t.id, name: cleanName(t.name, 'TV'), firstSeen: Number(t.firstSeen) || Date.now(), ws: null, pending: [], freeze: null });
+      }
+    }
+  } catch (e) { /* primer arranque */ }
+}
+
+function saveTvs() {
+  try {
+    fs.mkdirSync(path.dirname(tvsFile), { recursive: true });
+    const tmp = tvsFile + '.tmp';
+    const list = [...tvs.values()].map((t) => ({ id: t.id, name: t.name, firstSeen: t.firstSeen }));
+    fs.writeFileSync(tmp, JSON.stringify({ tvs: list }));
+    fs.renameSync(tmp, tvsFile);
+  } catch (e) {
+    console.error('[tv] no se pudo guardar la lista de TV:', e.message);
+  }
+}
+
+function cleanName(v, fallback) {
+  const n = (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim() : '').slice(0, MAX_TV_NAME);
+  return n || fallback;
+}
+
+const tvOnline = (t) => isOpen(t.ws);
+
+// ---------- limpieza de colas ----------
 function prune() {
   const limit = Date.now() - MAX_AGE_MS;
-  for (let i = pending.length - 1; i >= 0; i--) {
-    if (pending[i].ts < limit) pending.splice(i, 1);
+  for (const t of tvs.values()) {
+    for (let i = t.pending.length - 1; i >= 0; i--) {
+      if (t.pending[i].ts < limit) t.pending.splice(i, 1);
+    }
+    while (t.pending.length > MAX_PENDING) t.pending.shift();
   }
-  while (pending.length > MAX_PENDING) pending.shift();
   for (const [uid, list] of replies) {
     const fresh = list.filter((r) => r.ts >= limit);
     if (fresh.length) replies.set(uid, fresh);
@@ -101,10 +142,10 @@ function prune() {
   }
 }
 
-function sendToTv(msg) {
-  if (!isOpen(tv)) return false;
+function sendToTv(t, msg) {
+  if (!tvOnline(t)) return false;
   try {
-    tv.send(JSON.stringify({ type: 'msg', ...msg }));
+    t.ws.send(JSON.stringify({ type: 'msg', ...msg }));
     return true;
   } catch (e) {
     return false;
@@ -123,9 +164,9 @@ function sendReplyToPhone(uid, entry) {
 }
 
 // ---------- bloqueo de la TV ----------
-function activeFreeze() {
-  if (freeze && freeze.endsAt <= Date.now()) freeze = null;
-  return freeze;
+function activeFreeze(t) {
+  if (t.freeze && t.freeze.endsAt <= Date.now()) t.freeze = null;
+  return t.freeze;
 }
 
 // Próxima vez que en el reloj local sean las `hour`:`minute` (si faltan menos de 1 min, la del día siguiente)
@@ -138,11 +179,11 @@ function nextLocalTime(hour, minute) {
   return end;
 }
 
-function sendFreezeToTv() {
-  if (!isOpen(tv)) return false;
-  const f = activeFreeze();
+function sendFreezeToTv(t) {
+  if (!tvOnline(t)) return false;
+  const f = activeFreeze(t);
   try {
-    tv.send(JSON.stringify(
+    t.ws.send(JSON.stringify(
       f
         ? { type: 'freeze', endsIn: f.endsAt - Date.now(), label: f.label, by: f.by }
         : { type: 'unfreeze' }
@@ -153,10 +194,19 @@ function sendFreezeToTv() {
   }
 }
 
-function freezeInfo() {
-  const f = activeFreeze();
+function freezeInfo(t) {
+  const f = activeFreeze(t);
   return f ? { hasta: f.endsAt, ahora: Date.now(), label: f.label, by: f.by } : null;
 }
+
+// A qué TV va una orden: "tv" ausente o "todas" = todas las vinculadas; si no, esa TV.
+function targets(id) {
+  if (id === undefined || id === null || id === '' || id === 'todas') return { list: [...tvs.values()] };
+  if (typeof id !== 'string' || !tvs.has(id)) return { error: 'tv_desconocida' };
+  return { list: [tvs.get(id)] };
+}
+
+const planView = () => ({ ...pay.plan(), tvs_usadas: tvs.size });
 
 // ---------- HTTP ----------
 const server = http.createServer(async (req, res) => {
@@ -171,20 +221,24 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/status') {
     prune();
+    const list = [...tvs.values()];
+    const frozen = list.map((t) => freezeInfo(t)).find((b) => b);
     return json(res, 200, {
       ok: true,
-      tv: isOpen(tv),
-      pendientes: pending.length,
-      bloqueo: freezeInfo(),
+      tv: list.some(tvOnline),             // (compatibilidad) hay alguna TV conectada
+      tvs: list.map((t) => ({ id: t.id, name: t.name, online: tvOnline(t), pendientes: t.pending.length, bloqueo: freezeInfo(t) })),
+      capacidad: pay.capacity(),
+      pendientes: list.reduce((n, t) => n + t.pending.length, 0),
+      bloqueo: frozen || null,
       pin: PARENT_PIN !== '',
-      plan: pay.plan(),
+      plan: planView(),
     });
   }
 
   if (req.method === 'GET' && url.pathname === '/pay/status') {
     const id = url.searchParams.get('id');
     const pago = id ? pay.get(id) : null;
-    return json(res, 200, { ok: true, plan: pay.plan(), pago });
+    return json(res, 200, { ok: true, plan: planView(), pago });
   }
 
   if (req.method === 'POST' && url.pathname === '/pay/create') {
@@ -195,11 +249,34 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { ok: false, error: 'json_invalido' });
     }
     try {
-      const pago = await pay.create(data && data.metodo);
-      return json(res, 200, { ok: true, plan: pay.plan(), pago });
+      const pago = await pay.create(data && data.metodo, data && data.producto);
+      return json(res, 200, { ok: true, plan: planView(), pago });
     } catch (e) {
       return json(res, e.code || 500, { ok: false, error: e.message });
     }
+  }
+
+  if (req.method === 'POST' && (url.pathname === '/tv/rename' || url.pathname === '/tv/forget')) {
+    let data;
+    try {
+      data = JSON.parse(await readBody(req, 1024));
+    } catch (e) {
+      return json(res, 400, { ok: false, error: 'json_invalido' });
+    }
+    const t = data && typeof data.id === 'string' ? tvs.get(data.id) : null;
+    if (!t) return json(res, 404, { ok: false, error: 'tv_desconocida' });
+    if (url.pathname === '/tv/rename') {
+      t.name = cleanName(data.name, t.name);
+      saveTvs();
+      console.log(`[tv] renombrada: ${t.name}`);
+      return json(res, 200, { ok: true, name: t.name });
+    }
+    // Quitar una TV libera su lugar. Solo si está desconectada: una que sigue prendida se volvería a vincular sola.
+    if (tvOnline(t)) return json(res, 409, { ok: false, error: 'tv_conectada' });
+    tvs.delete(t.id);
+    saveTvs();
+    console.log(`[tv] quitada: ${t.name}`);
+    return json(res, 200, { ok: true, tvs: tvs.size, capacidad: pay.capacity() });
   }
 
   if (req.method === 'POST' && url.pathname === '/control') {
@@ -237,11 +314,25 @@ const server = http.createServer(async (req, res) => {
 
     const by = ((typeof data.from === 'string' ? data.from.trim() : '') || 'Los padres').slice(0, MAX_FROM);
 
+    const target = targets(data.tv);
+    if (target.error) return json(res, 404, { ok: false, error: target.error });
+    const dest = target.list;
+    if (dest.length === 0 && (data.action === 'freeze' || data.action === 'unfreeze')) {
+      return json(res, 409, { ok: false, error: 'sin_tvs' });
+    }
+    // "delivered": todas las TV elegidas recibieron la orden ahora. "entregadas"/"total" dan el detalle.
+    const result = (extra) => {
+      const entregadas = dest.filter(tvOnline).length;
+      return { ok: true, delivered: entregadas === dest.length, entregadas, total: dest.length, ...extra };
+    };
+
     if (data.action === 'unfreeze') {
-      freeze = null;
-      const delivered = isOpen(tv) ? sendFreezeToTv() : false;
-      console.log(`[control] desbloqueo (${by}) -> ${delivered ? 'TV' : 'TV sin conexión'}`);
-      return json(res, 200, { ok: true, delivered, bloqueo: null });
+      for (const t of dest) {
+        t.freeze = null;
+        sendFreezeToTv(t);
+      }
+      console.log(`[control] desbloqueo (${by}) -> ${dest.map((t) => `${t.name}${tvOnline(t) ? '' : ' (sin conexión)'}`).join(', ')}`);
+      return json(res, 200, result({ bloqueo: null }));
     }
 
     if (data.action === 'freeze') {
@@ -261,10 +352,12 @@ const server = http.createServer(async (req, res) => {
           ? `Descanso de ${minutes / 60} h`
           : `Descanso de ${minutes} min`;
       }
-      freeze = { endsAt, label, by };
-      const delivered = sendFreezeToTv();
-      console.log(`[control] bloqueo (${by}): ${label} -> ${delivered ? 'TV' : 'TV sin conexión, queda anotado'}`);
-      return json(res, 200, { ok: true, delivered, bloqueo: freezeInfo() });
+      for (const t of dest) {
+        t.freeze = { endsAt, label, by };
+        sendFreezeToTv(t);
+      }
+      console.log(`[control] bloqueo (${by}): ${label} -> ${dest.map((t) => `${t.name}${tvOnline(t) ? '' : ' (sin conexión, queda anotado)'}`).join(', ')}`);
+      return json(res, 200, result({ bloqueo: freezeInfo(dest[0]) }));
     }
 
     return json(res, 400, { ok: false, error: 'accion_invalida' });
@@ -279,6 +372,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (data === null || typeof data !== 'object') return json(res, 400, { ok: false, error: 'json_invalido' });
     if (!pay.allowed()) return json(res, 402, { ok: false, error: 'licencia_vencida' });
+
+    const target = targets(data.tv);
+    if (target.error) return json(res, 404, { ok: false, error: target.error });
+    const dest = target.list;
+    if (dest.length === 0) return json(res, 409, { ok: false, error: 'sin_tvs' });
 
     const text = typeof data.text === 'string' ? data.text.trim() : '';
     const from = (typeof data.from === 'string' ? data.from.trim() : '') || 'Familia';
@@ -314,11 +412,16 @@ const server = http.createServer(async (req, res) => {
       reply: data.reply === true && uid !== '',
       ts: Date.now(),
     };
-    pending.push(msg);
+    for (const t of dest) {
+      t.pending.push(msg);
+      if (t.pending.length > MAX_PENDING) t.pending.shift();
+    }
     prune();
-    const delivered = sendToTv(msg);
-    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.slice(0, 60)} -> ${delivered ? 'TV' : 'en cola'}`);
-    return json(res, 200, { ok: true, id: msg.id, delivered, queued: !delivered });
+    const entregadas = dest.filter((t) => sendToTv(t, msg)).length;
+    const delivered = entregadas > 0;
+    const enCola = dest.length - entregadas;
+    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.slice(0, 60)} -> ${dest.map((t) => t.name).join(', ')} (${entregadas} ahora, ${enCola} en cola)`);
+    return json(res, 200, { ok: true, id: msg.id, delivered, queued: enCola > 0, entregadas, en_cola: enCola, total: dest.length });
   }
 
   json(res, 404, { ok: false, error: 'no_existe' });
@@ -338,13 +441,17 @@ server.on('upgrade', (req, socket, head) => {
     socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
+  if (url.searchParams.get('role') !== 'phone' && url.searchParams.has('id') && !UID_RE.test(url.searchParams.get('id'))) {
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
-function handleTvMessage(m) {
+function handleTvMessage(t, m) {
   if (m.type === 'ack' && typeof m.id === 'string') {
-    const i = pending.findIndex((p) => p.id === m.id);
-    if (i !== -1) pending.splice(i, 1);
+    const i = t.pending.findIndex((p) => p.id === m.id);
+    if (i !== -1) t.pending.splice(i, 1);
     return;
   }
   if (m.type === 'reply') {
@@ -356,6 +463,7 @@ function handleTvMessage(m) {
       id: String(m.id || '').slice(0, 64),
       choice: m.choice,
       re: String(m.re || '').slice(0, 80),
+      tv: t.name,
       ts: Date.now(),
     };
     const list = replies.get(m.to) || [];
@@ -367,30 +475,54 @@ function handleTvMessage(m) {
   }
 }
 
-function attachTv(ws) {
-  if (tv && tv !== ws) {
-    try { tv.close(4000, 'reemplazada'); } catch (e) { /* ya cerrada */ }
+function attachTv(ws, id, name) {
+  let t = tvs.get(id);
+  // Migración: la app vieja de la TV no mandaba id y quedó anotada como 'tv-principal'. Cuando la misma TV se
+  // actualiza y se presenta con su id propio, toma ese lugar en vez de ocupar uno más.
+  if (!t && id !== DEFAULT_TV_ID && tvs.has(DEFAULT_TV_ID) && !tvOnline(tvs.get(DEFAULT_TV_ID))) {
+    const legacy = tvs.get(DEFAULT_TV_ID);
+    tvs.delete(DEFAULT_TV_ID);
+    t = { ...legacy, id, ws: null };
+    tvs.set(id, t);
+    saveTvs();
+    console.log(`[tv] "${t.name}" se actualizó: ahora tiene su propio id`);
   }
-  tv = ws;
-  console.log('[ws] TV conectada');
+  if (!t) {
+    // TV nueva: entra solo si queda lugar. Si no, se le avisa para que ofrezca comprar más lugares.
+    if (tvs.size >= pay.capacity()) {
+      try { ws.send(JSON.stringify({ type: 'limit', capacidad: pay.capacity(), usadas: tvs.size })); } catch (e) { /* cerrada */ }
+      console.log(`[ws] TV rechazada: límite de ${pay.capacity()} TV`);
+      ws.close(4001, 'limite');
+      return;
+    }
+    t = { id, name: cleanName(name, `TV ${tvs.size + 1}`), firstSeen: Date.now(), ws: null, pending: [], freeze: null };
+    tvs.set(id, t);
+    saveTvs();
+  }
+  if (t.ws && t.ws !== ws) {
+    try { t.ws.close(4000, 'reemplazada'); } catch (e) { /* ya cerrada */ }
+  }
+  t.ws = ws;
+  console.log(`[ws] TV conectada: ${t.name}`);
+  try { ws.send(JSON.stringify({ type: 'hello', name: t.name, capacidad: pay.capacity(), usadas: tvs.size })); } catch (e) { /* cerrada */ }
 
   ws.on('message', (raw) => {
     ws.isAlive = true;
     let m;
     try { m = JSON.parse(raw.toString()); } catch (e) { return; }
-    if (m && typeof m === 'object') handleTvMessage(m);
+    if (m && typeof m === 'object') handleTvMessage(t, m);
   });
   ws.on('close', () => {
-    if (tv === ws) tv = null;
-    console.log('[ws] TV desconectada');
+    if (t.ws === ws) t.ws = null;
+    console.log(`[ws] TV desconectada: ${t.name}`);
   });
 
   // Si hay un bloqueo en curso, la TV lo retoma (por ejemplo, la prendieron de nuevo)
-  if (activeFreeze()) sendFreezeToTv();
+  if (activeFreeze(t)) sendFreezeToTv(t);
 
   // Entregar lo que quedó pendiente mientras la TV estaba apagada
   prune();
-  for (const m of pending) sendToTv(m);
+  for (const m of t.pending) sendToTv(t, m);
 }
 
 function attachPhone(ws, uid) {
@@ -430,7 +562,7 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => { /* el 'close' se encarga */ });
 
   if (url.searchParams.get('role') === 'phone') attachPhone(ws, url.searchParams.get('uid'));
-  else attachTv(ws);
+  else attachTv(ws, url.searchParams.get('id') || DEFAULT_TV_ID, url.searchParams.get('name'));
 });
 
 // Si alguien deja de contestar (cortaron el wifi, apagaron de golpe) lo damos de baja
@@ -445,4 +577,5 @@ setInterval(() => {
   }
 }, 30000);
 
+loadTvs();
 server.listen(PORT, () => console.log(`Relay escuchando en :${PORT}`));

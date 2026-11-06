@@ -114,6 +114,14 @@ class MainActivity : Activity() {
     private var frozenUntil = 0L // en SystemClock.elapsedRealtime()
     private var frozenLabel = ""
     private var frozenBy = ""
+    private var frozenWhere = ""   // "2 de 3 TV" cuando se mira "Todas" y hay varias TV
+
+    // varias TV: lista que informa el servidor y destino elegido (null = todas)
+    private class TvInfo(val id: String, val name: String, val online: Boolean, val pending: Int, val freeze: JSONObject?)
+    private var tvList: List<TvInfo> = emptyList()
+    private var tvTarget: String? = null
+    private lateinit var tvPicker: HorizontalScrollView
+    private lateinit var tvPickerRow: LinearLayout
     private var sessionPin: String? = null // el PIN de padres, solo mientras la app está abierta
     private var pendingAuth: (() -> Unit)? = null
 
@@ -137,6 +145,10 @@ class MainActivity : Activity() {
     private var payId: String? = null
     private var payExpiresAt = 0L // en SystemClock.elapsedRealtime()
     private var payDone = false
+    private var payProduct = "plan"   // "plan" o "extra" (+3 TV)
+    private var payMethod = "usdc"
+    private var payWhat: TextView? = null
+    private var planCache: JSONObject? = null
 
     private val phonePoll: Runnable = object : Runnable {
         override fun run() {
@@ -330,6 +342,19 @@ class MainActivity : Activity() {
             background = roundedBg(0x1FFFFFFF, dp(20), 0x2AFFFFFF, dp(1))
         }
         root.addView(statusPill, lp(wrap, wrap, top = 16))
+
+        // Destino: solo aparece cuando hay 2 o más TV vinculadas
+        tvTarget = Profile.tvTarget(this)
+        tvPickerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        tvPicker = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(tvPickerRow, FrameLayout.LayoutParams(wrap, wrap))
+        }
+        root.addView(tvPicker, lp(match, wrap, top = 10))
 
         if (!Cfg.configured) {
             root.addView(
@@ -758,6 +783,7 @@ class MainActivity : Activity() {
             .put("duration", if (longDuration) "larga" else "normal")
             .put("color", Profile.color(this))
             .put("reply", askedReply)
+        target()?.let { json.put("tv", it) }
         Profile.avatar(this)?.let { json.put("avatar", it) }
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
@@ -769,10 +795,18 @@ class MainActivity : Activity() {
             override fun onResponse(call: Call, response: Response) {
                 val raw = response.use { it.body?.string().orEmpty() }
                 val code = response.code
-                val delivered = runCatching { JSONObject(raw).optBoolean("delivered", false) }.getOrDefault(false)
+                val o = runCatching { JSONObject(raw) }.getOrNull()
+                val delivered = o?.optBoolean("delivered", false) ?: false
+                val total = o?.optInt("total", 1) ?: 1
+                val entregadas = o?.optInt("entregadas", if (delivered) 1 else 0) ?: 0
                 runOnUiThread {
                     when {
-                        code in 200..299 -> sendDone(true, delivered, askedReply, null)
+                        code in 200..299 -> sendDone(true, delivered, askedReply, null, total, entregadas)
+                        code == 409 -> sendDone(false, false, askedReply, "Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele.")
+                        code == 404 -> {
+                            sendDone(false, false, askedReply, "Esa TV ya no está vinculada.")
+                            fetchStatus()
+                        }
                         code == 401 -> sendDone(false, false, askedReply, "El código de acceso no coincide con el del servidor.")
                         code == 402 -> sendDone(false, false, askedReply, "El plan venció. Activalo desde la tele (botón Plan).")
                         else -> sendDone(false, false, askedReply, "El servidor respondió con un error ($code).")
@@ -782,13 +816,18 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?) {
+    private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?, total: Int = 1, entregadas: Int = 0) {
         sending = false
         if (ok) {
             input.setText("")
             wantReply = false // para no tomar el control de la tele sin querer en el próximo mensaje
             renderOptions()
             when {
+                total > 1 && entregadas == total ->
+                    showFeedback("Enviado a las $total TV." + if (askedReply) " Te aviso cuando respondan." else "", Pal.ok)
+                total > 1 && entregadas > 0 ->
+                    showFeedback("Enviado a $entregadas de $total TV. En las apagadas se muestra apenas se prendan.", Pal.warn)
+                total > 1 -> showFeedback("Quedó en cola: se muestra apenas se prendan las TV.", Pal.warn)
                 delivered && askedReply -> showFeedback("Enviado. Te aviso cuando respondan.", Pal.ok)
                 delivered -> showFeedback("Enviado. La tele lo muestra ahora.", Pal.ok)
                 else -> showFeedback("Quedó en cola: se muestra apenas se prenda la tele.", Pal.warn)
@@ -816,12 +855,157 @@ class MainActivity : Activity() {
                 val o = runCatching { JSONObject(raw) }.getOrNull()
                 runOnUiThread {
                     if (okHttp && o != null) {
-                        renderStatus(if (o.optBoolean("tv")) 1 else 2, o.optInt("pendientes"))
-                        applyFreeze(o.optJSONObject("bloqueo"))
+                        val arr = o.optJSONArray("tvs")
+                        if (arr != null) {
+                            tvList = (0 until arr.length()).mapNotNull { i ->
+                                val t = arr.optJSONObject(i) ?: return@mapNotNull null
+                                TvInfo(t.optString("id"), t.optString("name"), t.optBoolean("online"), t.optInt("pendientes"), t.optJSONObject("bloqueo"))
+                            }
+                            renderTvState()
+                        } else {
+                            renderStatus(if (o.optBoolean("tv")) 1 else 2, o.optInt("pendientes"))
+                            applyFreeze(o.optJSONObject("bloqueo"))
+                        }
                     } else {
                         renderStatus(3, 0)
                     }
                 }
+            }
+        })
+    }
+
+    // ---- varias TV ----
+
+    /** TV elegida como destino, o null = todas (también cuando la elegida ya no existe o hay una sola). */
+    private fun target(): String? = tvTarget?.takeIf { id -> tvList.size >= 2 && tvList.any { it.id == id } }
+
+    private fun selectedTv(): TvInfo? = target()?.let { id -> tvList.firstOrNull { it.id == id } }
+
+    /** Redibuja el selector, el estado y la tarjeta de bloqueo con lo último que dijo el servidor. */
+    private fun renderTvState() {
+        renderPicker()
+        val sel = selectedTv()
+        val list = if (sel != null) listOf(sel) else tvList
+        val online = list.count { it.online }
+        val pending = list.sumOf { it.pending }
+        val multi = tvList.size > 1
+        val (t, c) = when {
+            list.isEmpty() -> "●  Ninguna TV vinculada todavía" to Pal.warn
+            online == list.size && list.size == 1 ->
+                (if (multi) "●  ${list[0].name} conectada" else "●  TV conectada") to Pal.ok
+            online == list.size -> "●  ${list.size} TV conectadas" to Pal.ok
+            online == 0 -> {
+                val who = if (list.size == 1) (if (multi) "${list[0].name} apagada" else "TV apagada") else "Las ${list.size} TV apagadas"
+                (if (pending > 0) "●  $who · $pending en cola" else "●  $who o sin red") to Pal.warn
+            }
+            else -> "●  $online de ${list.size} TV conectadas" to Pal.warn
+        }
+        statusPill.text = t
+        statusPill.setTextColor(c)
+
+        // Bloqueo: el de la TV elegida; con "Todas", el primero que haya (y cuántas están bloqueadas)
+        val frozen = list.filter { it.freeze != null }
+        frozenWhere = if (sel == null && multi && frozen.isNotEmpty()) "${frozen.size} de ${list.size} TV" else ""
+        applyFreeze(frozen.firstOrNull()?.freeze)
+    }
+
+    private fun renderPicker() {
+        if (tvList.size < 2) {
+            tvPicker.visibility = View.GONE
+            return
+        }
+        tvPicker.visibility = View.VISIBLE
+        tvPickerRow.removeAllViews()
+        tvPickerRow.addView(label("Para:", 13f, Pal.muted), lp(wrap, wrap).apply { rightMargin = dp(10) })
+        val selected = target()
+        fun add(text: String, id: String?, tv: TvInfo?) {
+            val c = chip(text, 13f)
+            styleChip(c, id == selected)
+            if (tv != null && !tv.online) c.alpha = 0.6f
+            c.setOnClickListener {
+                tvTarget = id
+                Profile.setTvTarget(this, id)
+                renderTvState()
+            }
+            if (tv != null) {
+                c.setOnLongClickListener {
+                    manageTv(tv)
+                    true
+                }
+            }
+            tvPickerRow.addView(c, lp(wrap, wrap).apply { rightMargin = dp(8) })
+        }
+        add("Todas", null, null)
+        tvList.forEach { add(it.name, it.id, it) }
+    }
+
+    /** Mantener apretada una TV: cambiarle el nombre o quitarla (libera su lugar). */
+    private fun manageTv(tv: TvInfo) {
+        AlertDialog.Builder(this)
+            .setTitle(tv.name)
+            .setItems(arrayOf("Cambiar nombre", "Quitar esta TV")) { _, which ->
+                if (which == 0) renameTv(tv) else forgetTv(tv)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun renameTv(tv: TvInfo) {
+        val field = EditText(this).apply {
+            setText(tv.name)
+            setSelection(text.length)
+            filters = arrayOf<InputFilter>(InputFilter.LengthFilter(24))
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Nombre de la TV")
+            .setView(field)
+            .setPositiveButton("Guardar") { _, _ ->
+                val n = field.text.toString().trim()
+                if (n.isNotEmpty()) postTv("/tv/rename", JSONObject().put("id", tv.id).put("name", n)) { code, _ ->
+                    if (code in 200..299) fetchStatus() else showFeedback("No se pudo cambiar el nombre ($code).", Pal.bad)
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun forgetTv(tv: TvInfo) {
+        AlertDialog.Builder(this)
+            .setTitle("¿Quitar «${tv.name}»?")
+            .setMessage("Se libera su lugar en el plan. Si esa TV vuelve a abrir la app, se vincula de nuevo.")
+            .setPositiveButton("Quitar") { _, _ ->
+                postTv("/tv/forget", JSONObject().put("id", tv.id)) { code, o ->
+                    when {
+                        code in 200..299 -> {
+                            if (tvTarget == tv.id) {
+                                tvTarget = null
+                                Profile.setTvTarget(this, null)
+                            }
+                            fetchStatus()
+                            showFeedback("TV quitada.", Pal.ok)
+                        }
+                        code == 409 -> showFeedback("Esa TV está prendida: apagala primero (si no, se vuelve a vincular sola).", Pal.warn)
+                        else -> showFeedback("No se pudo quitar la TV ($code ${o?.optString("error").orEmpty()}).", Pal.bad)
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun postTv(path: String, json: JSONObject, done: (Int, JSONObject?) -> Unit) {
+        val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        Net.http.newCall(relayRequest(path).post(body).build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { showFeedback("No hay conexión con el servidor. Probá de nuevo.", Pal.bad) }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.use { it.body?.string().orEmpty() }
+                val code = response.code
+                val o = runCatching { JSONObject(raw) }.getOrNull()
+                runOnUiThread { done(code, o) }
             }
         })
     }
@@ -894,6 +1078,7 @@ class MainActivity : Activity() {
         val json = JSONObject()
             .put("action", action)
             .put("from", Profile.name(this))
+        target()?.let { json.put("tv", it) }
         if (action == "freeze") {
             json.put("mode", mode)
             if (mode == "until") json.put("hour", hour).put("minute", minute) else json.put("minutes", minutes)
@@ -920,19 +1105,35 @@ class MainActivity : Activity() {
         when {
             code in 200..299 -> {
                 if (pin != null) sessionPin = pin
-                applyFreeze(o?.optJSONObject("bloqueo"))
                 val delivered = o?.optBoolean("delivered", false) ?: false
+                val total = o?.optInt("total", 1) ?: 1
+                val entregadas = o?.optInt("entregadas", if (delivered) 1 else 0) ?: 0
+                val who = if (total > 1) "las $total TV" else selectedTv()?.let { "«${it.name}»" } ?: "la tele"
                 if (action == "unfreeze") {
                     showFeedback(
-                        if (delivered) "Tele desbloqueada." else "Desbloqueo anotado: la tele está apagada.",
+                        when {
+                            delivered -> "${who.replaceFirstChar { it.uppercase() }} ${if (total > 1) "desbloqueadas" else "desbloqueada"}."
+                            total > 1 -> "Desbloqueo anotado: ${total - entregadas} de $total TV están apagadas."
+                            else -> "Desbloqueo anotado: la tele está apagada."
+                        },
                         Pal.ok
                     )
                 } else {
                     showFeedback(
-                        if (delivered) "Tele bloqueada." else "Anotado. La tele está apagada: se bloquea cuando se prenda.",
+                        when {
+                            delivered -> "${who.replaceFirstChar { it.uppercase() }} ${if (total > 1) "bloqueadas" else "bloqueada"}."
+                            total > 1 -> "Bloqueadas $entregadas de $total TV. Las apagadas se bloquean cuando se prendan."
+                            else -> "Anotado. La tele está apagada: se bloquea cuando se prenda."
+                        },
                         if (delivered) Pal.ok else Pal.warn
                     )
                 }
+                fetchStatus() // el estado por TV lo manda el servidor
+            }
+            code == 409 -> showFeedback("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele.", Pal.bad)
+            code == 404 -> {
+                showFeedback("Esa TV ya no está vinculada.", Pal.bad)
+                fetchStatus()
             }
             code == 401 -> showFeedback("El código de acceso no coincide con el del servidor.", Pal.bad)
             code == 402 -> showFeedback("El plan venció. Activalo desde la tele (botón Plan).", Pal.bad)
@@ -987,7 +1188,8 @@ class MainActivity : Activity() {
         controlIdle.visibility = if (frozen) View.GONE else View.VISIBLE
         controlActive.visibility = if (frozen) View.VISIBLE else View.GONE
         if (frozen) {
-            frozenSub.text = if (frozenBy.isNotBlank()) "$frozenLabel · por $frozenBy" else frozenLabel
+            frozenSub.text = listOf(frozenLabel, if (frozenBy.isNotBlank()) "por $frozenBy" else "", frozenWhere)
+                .filter { it.isNotBlank() }.joinToString(" · ")
             updateCountdown()
         }
     }
@@ -1178,10 +1380,14 @@ class MainActivity : Activity() {
         val fecha = if (hasta > 0) SimpleDateFormat("d/M", Locale("es")).format(Date(hasta)) else ""
         val usd = plan.optInt("precio_usd", 5)
         val days = if (hasta > 0) ((hasta - System.currentTimeMillis()) / 86_400_000L).toInt() + 1 else 0
-        planBtn.text = when (plan.optString("estado")) {
-            "activo" -> "\uD83D\uDCB3  Plan activo hasta $fecha"
-            "prueba" -> "\uD83D\uDCB3  Prueba: $days ${if (days == 1) "día" else "días"}"
-            "vencido" -> "\uD83D\uDCB3  Plan vencido: activar"
+        planCache = plan
+        val cap = plan.optInt("capacidad", 0)
+        val tvsTxt = if (cap > 0) " · ${plan.optInt("tvs_usadas")}/$cap TV" else ""
+        planBtn.text = when {
+            RelayState.limit -> "\uD83D\uDCB3  Sumar TV (+${plan.optInt("tvs_por_grupo", 3)} por ${plan.optInt("precio_extra_usd", 8)} USD)"
+            plan.optString("estado") == "activo" -> "\uD83D\uDCB3  Plan activo hasta $fecha$tvsTxt"
+            plan.optString("estado") == "prueba" -> "\uD83D\uDCB3  Prueba: $days ${if (days == 1) "día" else "días"}$tvsTxt"
+            plan.optString("estado") == "vencido" -> "\uD83D\uDCB3  Plan vencido: activar"
             else -> "\uD83D\uDCB3  Plan ($usd USDC)"
         }
     }
@@ -1212,6 +1418,8 @@ class MainActivity : Activity() {
             return
         }
         payDone = false
+        payProduct = if (RelayState.limit) "extra" else "plan"
+        payMethod = "usdc"
         val overlay = FrameLayout(this).apply {
             background = appBackground()
             isClickable = true
@@ -1223,23 +1431,39 @@ class MainActivity : Activity() {
         }
 
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(label("\uD83D\uDCB3  Activá tu plan", 34f, Pal.text, bold = true), lp(wrap, wrap))
+        left.addView(label("\uD83D\uDCB3  Tu plan", 34f, Pal.text, bold = true), lp(wrap, wrap))
         left.addView(
             label("Escaneá el QR con tu billetera de Solana (Phantom, Solflare…)", 18f, Pal.muted),
             lp(wrap, wrap, top = 6)
         )
+        val plan = planCache
+        val base = plan?.optInt("tvs_incluidas", 3) ?: 3
+        val pack = plan?.optInt("tvs_por_grupo", 3) ?: 3
+        val usdPlan = plan?.optInt("precio_usd", 5) ?: 5
+        val usdExtra = plan?.optInt("precio_extra_usd", 8) ?: 8
+
+        // Qué se compra: el plan (hasta $base TV) o un grupo de TV más
+        val what = label("", 20f, Pal.text, bold = true)
+        left.addView(what, lp(wrap, wrap, top = 12))
+        val products = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val planBtn2 = payButton("Plan: hasta $base TV · $usdPlan USD") { payProduct = "plan"; createPay(payMethod) }
+        val extraBtn = payButton("+$pack TV · $usdExtra USD") { payProduct = "extra"; createPay(payMethod) }
+        products.addView(planBtn2, lp(wrap, wrap).apply { rightMargin = dp(12) })
+        products.addView(extraBtn, lp(wrap, wrap))
+        left.addView(products, lp(wrap, wrap, top = 8))
+
         val amount = label("", 30f, Pal.accentSoft, bold = true)
-        left.addView(amount, lp(wrap, wrap, top = 16))
+        left.addView(amount, lp(wrap, wrap, top = 12))
         val status = label("Preparando el pago…", 20f, Pal.text).apply { maxLines = 3 }
         left.addView(status, lp(wrap, wrap, top = 6))
 
         val methods = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val usdcBtn = payButton("Pagar con USDC") { createPay("usdc") }
-        val solBtn = payButton("Pagar con SOL") { createPay("sol") }
+        val usdcBtn = payButton("Pagar USDC") { createPay("usdc") }
+        val solBtn = payButton("Pagar SOL") { createPay("sol") }
         methods.addView(usdcBtn, lp(wrap, wrap).apply { rightMargin = dp(12) })
         methods.addView(solBtn, lp(wrap, wrap))
-        left.addView(methods, lp(wrap, wrap, top = 16))
-        left.addView(payButton("Cerrar") { closePay() }, lp(wrap, wrap, top = 10))
+        methods.addView(payButton("Cerrar") { closePay() }, lp(wrap, wrap).apply { marginStart = dp(12) })
+        left.addView(methods, lp(wrap, wrap, top = 12))
         row.addView(left, LinearLayout.LayoutParams(0, wrap, 1f))
 
         // El QR va sobre blanco, grande y con margen, para que cualquier cámara lo lea
@@ -1260,6 +1484,7 @@ class MainActivity : Activity() {
         payQr = qr
         payAmount = amount
         payStatus = status
+        payWhat = what
         usdcBtn.requestFocus()
         createPay("usdc")
     }
@@ -1272,6 +1497,7 @@ class MainActivity : Activity() {
         payQr = null
         payAmount = null
         payStatus = null
+        payWhat = null
         payId = null
         planBtn.requestFocus()
         fetchPlan()
@@ -1280,13 +1506,20 @@ class MainActivity : Activity() {
     /** Pide un QR nuevo al servidor para pagar con [metodo] ("usdc" o "sol"). */
     private fun createPay(metodo: String) {
         main.removeCallbacks(payPoll)
+        payMethod = metodo
+        val p = planCache
+        payWhat?.text = if (payProduct == "extra") {
+            "Sumar ${p?.optInt("tvs_por_grupo", 3) ?: 3} TV más (hoy ${p?.optInt("tvs_usadas") ?: 0} de ${p?.optInt("capacidad") ?: 3})"
+        } else {
+            "Plan de ${p?.optInt("dias", 30) ?: 30} días · hasta ${p?.optInt("tvs_incluidas", 3) ?: 3} TV"
+        }
         payId = null
         payDone = false
         payQr?.setImageDrawable(null)
         payAmount?.text = ""
         payStatus?.setTextColor(Pal.text)
         payStatus?.text = "Preparando el pago…"
-        val body = JSONObject().put("metodo", metodo).toString()
+        val body = JSONObject().put("metodo", metodo).put("producto", payProduct).toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
         Net.http.newCall(relayRequest("/pay/create").post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -1350,16 +1583,21 @@ class MainActivity : Activity() {
             "pagado" -> {
                 payDone = true
                 main.removeCallbacks(payPoll)
-                val hasta = o.optJSONObject("plan")?.optLong("hasta", 0L) ?: 0L
+                val plan = o.optJSONObject("plan")
+                val hasta = plan?.optLong("hasta", 0L) ?: 0L
                 val fecha = if (hasta > 0) SimpleDateFormat("d 'de' MMMM", Locale("es")).format(Date(hasta)) else ""
                 payQr?.setImageDrawable(null)
                 payAmount?.text = "✅  ¡Pago recibido!"
-                payMessage("Gracias. Tu plan está activo hasta el $fecha.", Pal.ok)
+                if (o.optJSONObject("pago")?.optString("producto") == "extra") {
+                    payMessage("Gracias. Ya podés vincular hasta ${plan?.optInt("capacidad") ?: 0} TV: prendé la nueva y abrí Familia TV.", Pal.ok)
+                } else {
+                    payMessage("Gracias. Tu plan está activo hasta el $fecha.", Pal.ok)
+                }
             }
             "vencido" -> {
                 main.removeCallbacks(payPoll)
                 payQr?.setImageDrawable(null)
-                payMessage("Este QR venció. Tocá una moneda para generar otro.", Pal.warn)
+                payMessage("Este QR venció. Tocá USDC o SOL para generar otro.", Pal.warn)
             }
             else -> {
                 val left = ((payExpiresAt - SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)
@@ -1373,6 +1611,8 @@ class MainActivity : Activity() {
     private fun refreshTv() {
         val (t, c) = when {
             !Cfg.configured -> "App sin configurar (faltan RELAY_URL y RELAY_TOKEN)" to Pal.bad
+            RelayState.limit -> "Esta TV no entra: el plan permite ${RelayState.capacity} TV. Tocá el botón de abajo para sumar más." to Pal.warn
+            RelayState.connected && RelayState.tvName.isNotBlank() -> "Conectada como «${RelayState.tvName}» — esperando mensajes" to Pal.ok
             RelayState.connected -> "Conectada — esperando mensajes" to Pal.ok
             else -> "Conectando…" to Pal.warn
         }
