@@ -24,6 +24,7 @@ class RelayService : Service() {
     companion object {
         const val ACTION_TEST = "com.serchu.familiatv.TEST"
         const val ACTION_TEST_REPLY = "com.serchu.familiatv.TEST_REPLY"
+        const val ACTION_TEST_URGENT = "com.serchu.familiatv.TEST_URGENT"
         const val ACTION_TEST_FREEZE = "com.serchu.familiatv.TEST_FREEZE"
         private const val NOTIF_ID = 1
     }
@@ -39,7 +40,11 @@ class RelayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        presenter = OverlayPresenter(applicationContext) { msg, choice -> sendReply(msg, choice) }
+        presenter = OverlayPresenter(
+            applicationContext,
+            onReply = { msg, choice -> sendReply(msg, choice) },
+            onSeen = { msg -> sendReply(msg, "visto") } // le avisa al celular que el mensaje ya está en pantalla
+        )
         freeze = FreezeController(applicationContext)
         link = RelayLink(
             applicationContext,
@@ -61,6 +66,7 @@ class RelayService : Service() {
         when (intent?.action) {
             ACTION_TEST -> showTest(false)
             ACTION_TEST_REPLY -> showTest(true)
+            ACTION_TEST_URGENT -> showTest(true, urgent = true)
             // La prueba nunca pisa un bloqueo real: si ya hay uno en curso, no hace nada
             ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(45_000L, T("Prueba de bloqueo"), Cfg.senderName) }
         }
@@ -127,8 +133,9 @@ class RelayService : Service() {
             ts = o.optLong("ts", System.currentTimeMillis()),
             avatar = o.optString("avatar").takeIf { it.isNotBlank() },
             longStay = o.optString("duration") == "larga",
-            needsReply = o.optBoolean("reply", false),
-            color = o.optString("color")
+            needsReply = o.optBoolean("reply", false) || o.optBoolean("urgent", false),
+            color = o.optString("color"),
+            urgent = o.optBoolean("urgent", false)
         )
         main.post {
             RelayState.lastFrom = msg.from
@@ -150,19 +157,22 @@ class RelayService : Service() {
         )
     }
 
-    private fun showTest(withReply: Boolean) {
+    private fun showTest(withReply: Boolean, urgent: Boolean = false) {
         val m = Msg(
             id = "test-" + System.nanoTime(),
             uid = "",
             from = Cfg.senderName,
-            text = if (withReply) {
+            text = if (urgent) {
+                T("Necesito que vengas ya")
+            } else if (withReply) {
                 T("¿Vienen a cenar? Probá los botones con el control.")
             } else {
                 T("Así se van a ver los mensajes. Todo funciona.")
             },
             ts = System.currentTimeMillis(),
             needsReply = withReply,
-            color = Profile.color(applicationContext)
+            color = Profile.color(applicationContext),
+            urgent = urgent
         )
         main.post { presenter.show(m) }
     }

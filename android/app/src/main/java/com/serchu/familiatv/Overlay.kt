@@ -6,7 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -15,7 +19,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -31,11 +38,15 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.ColorUtils
+import kotlin.math.PI
+import kotlin.math.hypot
+import kotlin.math.sin
 
 /**
  * Un mensaje que llegó a la TV.
  * [uid] es quien lo mandó (para devolverle la respuesta); vacío en los mensajes de prueba.
- * [longStay] pide que dure más en pantalla; [needsReply] muestra los botones de respuesta.
+ * [longStay] pide que dure más en pantalla; [needsReply] muestra los botones de respuesta;
+ * [urgent] ocupa toda la pantalla, repite el sonido y no se va hasta que alguien responda.
  */
 class Msg(
     val id: String,
@@ -46,7 +57,8 @@ class Msg(
     val avatar: String? = null,
     val longStay: Boolean = false,
     val needsReply: Boolean = false,
-    val color: String = ""
+    val color: String = "",
+    val urgent: Boolean = false
 )
 
 object Notifs {
@@ -85,6 +97,26 @@ object Notifs {
     }
 }
 
+/** Resplandor del color de quien escribe en los bordes de toda la pantalla; el centro queda libre. */
+private class EdgeGlow(context: Context, private val color: Int, private val dim: Int) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        val clear = ColorUtils.setAlphaComponent(color, 0)
+        paint.shader = RadialGradient(
+            w / 2f, h / 2f, hypot(w.toDouble(), h.toDouble()).toFloat() / 2f,
+            intArrayOf(clear, clear, ColorUtils.setAlphaComponent(color, 0x70), ColorUtils.setAlphaComponent(color, 0xC0)),
+            floatArrayOf(0f, 0.55f, 0.85f, 1f),
+            Shader.TileMode.CLAMP
+        )
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        if (dim != 0) canvas.drawColor(dim)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+    }
+}
+
 /** Ventana que además de dibujar atiende el botón Atrás del control cuando tiene el foco. */
 private class KeyFrame(context: Context, private val onBack: () -> Unit) : FrameLayout(context) {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -105,7 +137,8 @@ private class KeyFrame(context: Context, private val onBack: () -> Unit) : Frame
  */
 class OverlayPresenter(
     private val ctx: Context,
-    private val onReply: (Msg, String) -> Unit
+    private val onReply: (Msg, String) -> Unit,
+    private val onSeen: (Msg) -> Unit = {}
 ) {
 
     /** [intro] arranca las animaciones de entrada; [stop] frena las que se repiten (aura, ondas). */
@@ -115,10 +148,12 @@ class OverlayPresenter(
         val buttons: LinearLayout?,
         val first: View?,
         val intro: Runnable,
-        val stop: Runnable
+        val stop: Runnable,
+        val aura: View? = null
     )
 
-    private val choices get() = listOf("ok" to "OK", "voy" to T("Voy"), "ahora_no" to T("Ahora no"))
+    private val choices get() = listOf("ok" to "OK", "voy" to T("Voy"), "cinco_min" to T("5 minutos"), "ahora_no" to T("Ahora no"))
+    private val urgentChoices get() = listOf("voy" to T("Voy"), "cinco_min" to T("5 minutos"))
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val main = Handler(Looper.getMainLooper())
@@ -138,8 +173,8 @@ class OverlayPresenter(
     // Mientras un mensaje que pide respuesta siga sin contestar, repite el aviso sonoro
     private val repeatChime: Runnable = object : Runnable {
         override fun run() {
-            chime()
-            main.postDelayed(this, 20_000)
+            chime(currentMsg?.urgent == true)
+            main.postDelayed(this, if (currentMsg?.urgent == true) 10_000 else 20_000)
         }
     }
 
@@ -160,6 +195,7 @@ class OverlayPresenter(
         current?.let {
             it.stop.run()
             try { wm.removeView(it.root) } catch (e: Exception) { /* ya no estaba */ }
+            it.aura?.let { a -> try { wm.removeView(a) } catch (e: Exception) { /* ya no estaba */ } }
         }
         current = null
         currentMsg = null
@@ -167,6 +203,7 @@ class OverlayPresenter(
     }
 
     private fun stayMillis(m: Msg): Long = when {
+        m.urgent -> 290_000L
         m.needsReply -> 180_000L
         m.longStay -> (45_000L + m.text.length * 120L).coerceIn(45_000L, 120_000L)
         else -> (15_000L + m.text.length * 80L).coerceIn(15_000L, 45_000L)
@@ -175,11 +212,13 @@ class OverlayPresenter(
     private fun next() {
         val m = queue.removeFirstOrNull() ?: return
         val duration = stayMillis(m)
-        val built = buildCard(m)
+        val built = if (m.urgent) buildUrgent(m) else buildCard(m)
         try {
-            wm.addView(built.root, params(m.needsReply))
+            built.aura?.let { wm.addView(it, auraParams()) }
+            wm.addView(built.root, if (m.urgent) urgentParams() else params(m.needsReply))
         } catch (e: Exception) {
             // Sin permiso o sin ventana disponible: que al menos llegue como notificación
+            built.aura?.let { a -> try { wm.removeView(a) } catch (x: Exception) { /* no llegó a agregarse */ } }
             notifyFallback(m)
             next()
             return
@@ -187,8 +226,9 @@ class OverlayPresenter(
         current = built
         currentMsg = m
         answered = false
-        chime()
-        if (m.needsReply) main.postDelayed(repeatChime, 20_000)
+        chime(m.urgent)
+        if (m.needsReply) main.postDelayed(repeatChime, if (m.urgent) 10_000 else 20_000)
+        if (m.needsReply || m.urgent) onSeen(m) // "visto en la tele": se le avisa a quien lo mandó
         built.root.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
             .setDuration(520).setInterpolator(OvershootInterpolator(1.1f)).start()
         built.intro.run()
@@ -205,11 +245,14 @@ class OverlayPresenter(
         main.removeCallbacks(autoHide)
         main.removeCallbacks(afterSent)
         main.removeCallbacks(repeatChime)
+        b.stop.run()
+        b.aura?.animate()?.alpha(0f)?.setDuration(320)?.start()
         b.root.animate().alpha(0f).translationY(-ctx.dp(40).toFloat()).scaleX(0.97f).scaleY(0.97f).setDuration(320)
             .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 b.stop.run()
                 try { wm.removeView(b.root) } catch (e: Exception) { /* ya no estaba */ }
+                b.aura?.let { a -> try { wm.removeView(a) } catch (e: Exception) { /* ya no estaba */ } }
                 if (current === b) {
                     current = null
                     currentMsg = null
@@ -241,7 +284,7 @@ class OverlayPresenter(
         val sent = TextView(ctx).apply {
             text = "✓  " + T("Respuesta enviada: %s", label)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            setTextColor(Pal.ok)
+            setTextColor(if (m.urgent) Color.WHITE else Pal.ok)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             scaleX = 0.8f
@@ -256,12 +299,32 @@ class OverlayPresenter(
     }
 
     @Suppress("DEPRECATION")
+    private fun overlayType(): Int =
+        if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else WindowManager.LayoutParams.TYPE_PHONE
+
+    /** Capa de toda la pantalla para el resplandor: no toma el foco ni responde al control. */
+    private fun auraParams() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        overlayType(),
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        PixelFormat.TRANSLUCENT
+    )
+
+    /** Aviso urgente: toda la pantalla, con el foco del control y la tele sin apagarse. */
+    private fun urgentParams() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        overlayType(),
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        PixelFormat.TRANSLUCENT
+    )
+
     private fun params(focusable: Boolean): WindowManager.LayoutParams {
-        val type = if (Build.VERSION.SDK_INT >= 26) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
+        val type = overlayType()
         val flags = if (focusable) {
             // Toma el foco del control para poder elegir una respuesta
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
@@ -291,6 +354,8 @@ class OverlayPresenter(
         val cardW = minOf(ctx.resources.displayMetrics.widthPixels - ctx.dp(112), ctx.dp(980))
         val pulses = if (m.needsReply) ValueAnimator.INFINITE else 2   // ondas del avatar: sin parar si espera respuesta
         val running = mutableListOf<ValueAnimator>()
+        // Resplandor en los bordes de toda la pantalla (con un velo oscuro si pide respuesta)
+        val aura = EdgeGlow(ctx, accent, if (m.needsReply) 0x4D000000 else 0).apply { alpha = 0f }
 
         val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
             setPadding(ctx.dp(48), ctx.dp(30), ctx.dp(48), ctx.dp(22))
@@ -442,7 +507,7 @@ class OverlayPresenter(
         col.addView(header, LinearLayout.LayoutParams(wrap, wrap))
 
         val body = TextView(ctx).apply {
-            text = m.text
+            text = hiddenFrom(m.text, 0) // se va escribiendo solo (ver typewrite)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 38f)
             setTextColor(Pal.text)
             setLineSpacing(0f, 1.12f)
@@ -466,7 +531,7 @@ class OverlayPresenter(
                 translationY = ctx.dp(10).toFloat()
             }
             val btnRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-            val icons = mapOf("ok" to "✓", "voy" to "🏃", "ahora_no" to "✋")
+            val icons = mapOf("ok" to "✓", "voy" to "🏃", "cinco_min" to "⏱", "ahora_no" to "✋")
             choices.forEachIndexed { i, (choice, label) ->
                 val b = ctx.tvButton((icons[choice] ?: "") + "  " + label, accent) { answer(choice, label) }
                 if (i == 0) firstButton = b
@@ -525,6 +590,19 @@ class OverlayPresenter(
             replyChip?.animate()?.alpha(1f)?.setStartDelay(420)?.setDuration(400)?.start()
             body.animate().alpha(1f).translationY(0f).setStartDelay(300).setDuration(440).setInterpolator(soft).start()
             buttons?.animate()?.alpha(1f)?.translationY(0f)?.setStartDelay(520)?.setDuration(420)?.setInterpolator(soft)?.start()
+            typewrite(body, m.text, running, 450L)
+
+            // Resplandor de pantalla: entra y después respira
+            aura.animate().alpha(1f).setDuration(600).start()
+            ValueAnimator.ofFloat(0.55f, 1f).apply {
+                duration = 2200
+                startDelay = 700
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                addUpdateListener { aura.alpha = it.animatedValue as Float }
+                start()
+                running.add(this)
+            }
 
             // Destello de lado a lado
             ValueAnimator.ofFloat(-ctx.dp(240).toFloat(), cardW + ctx.dp(40).toFloat()).apply {
@@ -582,7 +660,222 @@ class OverlayPresenter(
             running.forEach { it.cancel() }
             running.clear()
         }
-        return Built(outer, bar, buttons, firstButton, intro, stop)
+        return Built(outer, bar, buttons, firstButton, intro, stop, aura)
+    }
+
+    /** El texto con lo que todavía no se escribió en transparente: el tamaño de la tarjeta no salta mientras aparece. */
+    private fun hiddenFrom(full: String, shown: Int): CharSequence {
+        val s = SpannableString(full)
+        if (shown < full.length) s.setSpan(ForegroundColorSpan(Color.TRANSPARENT), shown, full.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return s
+    }
+
+    private fun typewrite(tv: TextView, full: String, running: MutableList<ValueAnimator>, delay: Long) {
+        if (full.isEmpty()) return
+        ValueAnimator.ofInt(0, full.length).apply {
+            duration = (full.length * 28L).coerceIn(500L, 1600L)
+            startDelay = delay
+            interpolator = LinearInterpolator()
+            addUpdateListener { tv.text = hiddenFrom(full, it.animatedValue as Int) }
+            start()
+            running.add(this)
+        }
+    }
+
+    /**
+     * Aviso urgente: toda la pantalla en rojo, avatar grande con ondas que no paran, el mensaje enorme y solo
+     * dos respuestas (Voy / 5 minutos). El sonido se repite cada 10 segundos hasta que alguien contesta.
+     */
+    private fun buildUrgent(m: Msg): Built {
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        val match = ViewGroup.LayoutParams.MATCH_PARENT
+        val running = mutableListOf<ValueAnimator>()
+
+        val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xFFD0313F.toInt(), 0xFF8E1428.toInt(), 0xFF5E0B1B.toInt())
+            )
+            alpha = 0f
+            scaleX = 1.06f
+            scaleY = 1.06f
+        }
+        // Luz blanca que late detrás de todo
+        val pulse = View(ctx).apply {
+            background = GradientDrawable().apply {
+                setGradientType(GradientDrawable.RADIAL_GRADIENT)
+                setGradientRadius(ctx.dp(700).toFloat())
+                setColors(intArrayOf(0x55FFFFFF, 0x00FFFFFF))
+                setGradientCenter(0.5f, 0.45f)
+            }
+            alpha = 0f
+        }
+        outer.addView(pulse, FrameLayout.LayoutParams(match, match))
+
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(ctx.dp(80), ctx.dp(30), ctx.dp(80), ctx.dp(40))
+        }
+
+        val badge = TextView(ctx).apply {
+            text = "⚡  " + T("URGENTE")
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTextColor(0xFF9B1224.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            letterSpacing = 0.12f
+            setPadding(ctx.dp(24), ctx.dp(8), ctx.dp(24), ctx.dp(8))
+            background = roundedBg(Color.WHITE, ctx.dp(28))
+            scaleX = 0f
+            scaleY = 0f
+        }
+        col.addView(badge, LinearLayout.LayoutParams(wrap, wrap))
+
+        val avatarBox = FrameLayout(ctx).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val rings = List(3) {
+            View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.TRANSPARENT)
+                    setStroke(ctx.dp(4), Color.WHITE)
+                }
+                alpha = 0f
+            }
+        }
+        rings.forEach { avatarBox.addView(it, FrameLayout.LayoutParams(match, match)) }
+        val face = ctx.avatarRing(m.from, m.avatar, 200, Color.WHITE).apply {
+            scaleX = 0f
+            scaleY = 0f
+        }
+        avatarBox.addView(face, FrameLayout.LayoutParams(match, match))
+        col.addView(avatarBox, LinearLayout.LayoutParams(ctx.dp(200), ctx.dp(200)).apply { topMargin = ctx.dp(26) })
+
+        val who = TextView(ctx).apply {
+            text = T("%s te necesita", m.from)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+            setTextColor(0xE6FFFFFF.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            alpha = 0f
+            translationY = ctx.dp(14).toFloat()
+        }
+        col.addView(who, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(24) })
+
+        val body = TextView(ctx).apply {
+            text = hiddenFrom(m.text, 0)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 56f)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.08f)
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.END
+            alpha = 0f
+            translationY = ctx.dp(14).toFloat()
+        }
+        col.addView(body, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(8) })
+
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            alpha = 0f
+            translationY = ctx.dp(10).toFloat()
+        }
+        val btnRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        var firstButton: View? = null
+        val icons = mapOf("voy" to "🏃", "cinco_min" to "⏱")
+        urgentChoices.forEachIndexed { i, (choice, label) ->
+            val b = ctx.tvButton((icons[choice] ?: "") + "  " + label, Color.WHITE) { answer(choice, label) }
+            if (i == 0) firstButton = b
+            btnRow.addView(b, LinearLayout.LayoutParams(wrap, wrap).apply { if (i > 0) marginStart = ctx.dp(24) })
+        }
+        wrapper.addView(btnRow, LinearLayout.LayoutParams(wrap, wrap))
+        wrapper.addView(
+            TextView(ctx).apply {
+                text = T("Suena de nuevo hasta que alguien responda")
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                setTextColor(0xCCFFFFFF.toInt())
+                gravity = Gravity.CENTER
+            },
+            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(16) }
+        )
+        col.addView(wrapper, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(30) })
+        outer.addView(col, FrameLayout.LayoutParams(match, wrap, Gravity.CENTER))
+
+        // Barra de tiempo abajo
+        val bar = View(ctx).apply {
+            setBackgroundColor(0xD9FFFFFF.toInt())
+            pivotX = 0f
+        }
+        val track = FrameLayout(ctx).apply { setBackgroundColor(0x33FFFFFF) }
+        track.addView(bar, FrameLayout.LayoutParams(match, match))
+        outer.addView(track, FrameLayout.LayoutParams(match, ctx.dp(8), Gravity.BOTTOM))
+
+        val intro = Runnable {
+            val soft = DecelerateInterpolator()
+            badge.animate().scaleX(1f).scaleY(1f).setStartDelay(100).setDuration(450).setInterpolator(OvershootInterpolator(2f)).start()
+            face.animate().scaleX(1f).scaleY(1f).setStartDelay(200).setDuration(600).setInterpolator(OvershootInterpolator(1.8f)).start()
+            who.animate().alpha(1f).translationY(0f).setStartDelay(350).setDuration(420).setInterpolator(soft).start()
+            body.animate().alpha(1f).translationY(0f).setStartDelay(450).setDuration(460).setInterpolator(soft).start()
+            wrapper.animate().alpha(1f).translationY(0f).setStartDelay(800).setDuration(420).setInterpolator(soft).start()
+            typewrite(body, m.text, running, 650L)
+
+            // La luz de atrás late sin parar
+            ValueAnimator.ofFloat(0.25f, 1f).apply {
+                duration = 1200
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                addUpdateListener { pulse.alpha = it.animatedValue as Float }
+                start()
+                running.add(this)
+            }
+            // Ondas del avatar, una tras otra
+            rings.forEachIndexed { i, ring ->
+                ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 1700
+                    startDelay = 500L + i * 566L
+                    repeatCount = ValueAnimator.INFINITE
+                    interpolator = soft
+                    addUpdateListener {
+                        val f = it.animatedFraction
+                        ring.scaleX = 1f + 0.9f * f
+                        ring.scaleY = 1f + 0.9f * f
+                        ring.alpha = 0.8f * (1f - f)
+                    }
+                    start()
+                    running.add(this)
+                }
+            }
+            // El avatar "llama": un temblor corto cada tanto
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 3200
+                startDelay = 1200
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = LinearInterpolator()
+                addUpdateListener {
+                    val f = it.animatedFraction
+                    face.rotation = if (f < 0.7f) 0f else {
+                        val k = (f - 0.7f) / 0.3f
+                        (sin(k * PI * 4) * 6.0 * (1.0 - k)).toFloat()
+                    }
+                }
+                start()
+                running.add(this)
+            }
+        }
+        val stop = Runnable {
+            running.forEach { it.cancel() }
+            running.clear()
+        }
+        return Built(outer, bar, wrapper, firstButton, intro, stop)
     }
 
     /** Si el mensaje llegó tarde (la TV estaba apagada), lo aclara. */
@@ -597,8 +890,9 @@ class OverlayPresenter(
     }
 
     /** Aviso sonoro: el que esté elegido en la pantalla de inicio de la tele (ver Sounds.kt). */
-    private fun chime() {
-        Sounds.play(ctx)
+    private fun chime(urgent: Boolean = false) {
+        // En un aviso urgente lo que se esté mirando se pausa mientras suena
+        Sounds.play(ctx, exclusive = urgent)
     }
 
     private fun notifyFallback(m: Msg) {

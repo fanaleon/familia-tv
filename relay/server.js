@@ -35,7 +35,9 @@ const MAX_REPLIES = 20;          // respuestas en cola por persona si su móvil 
 const MAX_REPLY_QUEUES = 100;    // personas distintas con respuestas en cola
 // Los mensajes y las respuestas no se guardan más de 5 minutos (MSG_TTL_MIN): lo que pasa de ahí en cola se descarta.
 const MAX_AGE_MS = (Number(process.env.MSG_TTL_MIN) > 0 ? Number(process.env.MSG_TTL_MIN) : 5) * 60 * 1000;
-const CHOICES = new Set(['ok', 'voy', 'ahora_no', 'sin_respuesta']);
+const CHOICES = new Set(['ok', 'voy', 'ahora_no', 'cinco_min', 'sin_respuesta', 'visto']);
+const URGENT_GAP_MS = 60 * 1000;  // un aviso urgente por minuto por persona (evita apretarlo de a ratos o por juego)
+const urgentLast = new Map();     // uid -> hora del último aviso urgente
 const COLORS = new Set(['azul', 'rosa', 'verde', 'amarillo']);
 const MAX_FREEZE_MIN = 12 * 60;  // el bloqueo más largo que se puede pedir por minutos
 const PIN_MAX_FAILS = 5;         // intentos de PIN fallidos antes de frenar
@@ -493,15 +495,25 @@ const server = http.createServer(async (req, res) => {
       avatar = data.avatar;
     }
 
+    // Urgente: pantalla completa en la TV. Hace falta saber quién manda (uid) para devolverle el "visto" y la respuesta.
+    const urgent = data.urgent === true && uid !== '';
+    if (urgent) {
+      const wait = (urgentLast.get(uid) || 0) + URGENT_GAP_MS - Date.now();
+      if (wait > 0) return json(res, 429, { ok: false, error: 'urgente_muy_seguido', espera_s: Math.ceil(wait / 1000) });
+      urgentLast.set(uid, Date.now());
+      if (urgentLast.size > 500) urgentLast.delete(urgentLast.keys().next().value);
+    }
+
     const msg = {
       id: crypto.randomUUID(),
       uid,
       from: from.slice(0, MAX_FROM),
       text,
       avatar,
-      duration: data.duration === 'larga' ? 'larga' : 'normal',
+      duration: data.duration === 'larga' || urgent ? 'larga' : 'normal',
       color: COLORS.has(data.color) ? data.color : '',
-      reply: data.reply === true && uid !== '',
+      reply: (data.reply === true || urgent) && uid !== '',
+      urgent,
       ts: Date.now(),
     };
     for (const t of dest) {
@@ -512,7 +524,7 @@ const server = http.createServer(async (req, res) => {
     const entregadas = dest.filter((t) => sendToTv(t, msg)).length;
     const delivered = entregadas > 0;
     const enCola = dest.length - entregadas;
-    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.length} caracteres -> ${dest.map((t) => t.name).join(', ')} (${entregadas} ahora, ${enCola} en cola)`);
+    console.log(`[send] ${msg.from}${msg.urgent ? ' (URGENTE)' : msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.length} caracteres -> ${dest.map((t) => t.name).join(', ')} (${entregadas} ahora, ${enCola} en cola)`);
     return json(res, 200, { ok: true, id: msg.id, delivered, queued: enCola > 0, entregadas, en_cola: enCola, total: dest.length });
   }
 
