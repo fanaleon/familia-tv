@@ -132,7 +132,7 @@ function createPay(opts = {}) {
   if (!enabled) console.error('[pago] PAY_WALLET o USDC_MINT no son claves válidas: los pagos quedan desactivados');
 
   // ----- estado guardado en disco -----
-  let state = { firstSeen: now(), licenseUntil: 0, packs: 0, remindedFor: 0, paid: [] };
+  let state = { firstSeen: now(), licenseUntil: 0, packs: 0, remindedFor: 0, lastReceipt: null, paid: [] };
   try {
     const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     if (raw && typeof raw === 'object') {
@@ -141,6 +141,7 @@ function createPay(opts = {}) {
         licenseUntil: Number(raw.licenseUntil) || 0,
         packs: Number.isInteger(raw.packs) && raw.packs > 0 ? raw.packs : 0,
         remindedFor: Number(raw.remindedFor) || 0,
+        lastReceipt: raw.lastReceipt && typeof raw.lastReceipt.texto === 'string' ? { at: Number(raw.lastReceipt.at) || 0, texto: raw.lastReceipt.texto } : null,
         paid: Array.isArray(raw.paid) ? raw.paid.slice(-200) : [],
       };
     }
@@ -415,6 +416,8 @@ function createPay(opts = {}) {
     p.sig = sig;
     p.doneAt = t;
     p.recibo = buildReceipt(p);
+    state.lastReceipt = { at: t, texto: p.recibo.texto };
+    save();
     savePending();
     resolveAliases();
     try { if (opts.onPaid) opts.onPaid(p.recibo, { producto: p.product, monto: p.amount, moneda: p.symbol }); } catch (e) { console.error('[pago] onPaid:', e.message); }
@@ -562,7 +565,7 @@ function createPay(opts = {}) {
   // Si el servidor se reinició con pagos pendientes, se retoma la vigilancia
   if ([...pending.values()].some((p) => p.estado === 'esperando')) setImmediate(() => start());
 
-  return { create, get, plan, allowed, capacity, poll, stop, dueReminder, markReminded, _state: () => state, enabled, wallet };
+  return { create, get, plan, allowed, capacity, poll, stop, dueReminder, markReminded, lastReceipt: () => state.lastReceipt, _state: () => state, enabled, wallet };
 }
 
 module.exports = { createPay, b58encode, b58decode, isPubkey, newReference, USDC_MAINNET };
