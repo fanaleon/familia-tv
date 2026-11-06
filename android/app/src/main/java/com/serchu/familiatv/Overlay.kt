@@ -121,10 +121,20 @@ private class AuraScrim(context: Context, private val color: Int, private val di
 }
 
 /** Ventana que además de dibujar atiende el botón Atrás del control cuando tiene el foco. */
-private class KeyFrame(context: Context, private val onBack: () -> Unit) : FrameLayout(context) {
+private class KeyFrame(
+    context: Context,
+    private val onBack: () -> Unit,
+    private val onConfirm: (() -> Unit)? = null // si se indica, OK / Enter del control también lo atienden
+) : FrameLayout(context) {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) onBack()
+            return true
+        }
+        val confirm = onConfirm
+        if (confirm != null && (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER || event.keyCode == KeyEvent.KEYCODE_BUTTON_A)) {
+            if (event.action == KeyEvent.ACTION_UP) confirm()
             return true
         }
         return super.dispatchKeyEvent(event)
@@ -156,7 +166,6 @@ class OverlayPresenter(
     )
 
     private val choices get() = listOf("ok" to "OK", "voy" to T("Voy"), "cinco_min" to T("5 minutos"), "ahora_no" to T("Ahora no"))
-    private val urgentChoices get() = listOf("voy" to T("Voy"), "cinco_min" to T("5 minutos"))
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val main = Handler(Looper.getMainLooper())
@@ -231,7 +240,7 @@ class OverlayPresenter(
         answered = false
         chime(m.urgent)
         if (m.needsReply) main.postDelayed(repeatChime, if (m.urgent) 10_000 else 20_000)
-        if (m.needsReply || m.urgent) onSeen(m) // "visto en la tele": se le avisa a quien lo mandó
+        if (m.needsReply && !m.urgent) onSeen(m) // "visto en la tele": se le avisa a quien lo mandó (el urgente avisa al cerrarlo)
         built.root.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
             .setDuration(520).setInterpolator(OvershootInterpolator(1.1f)).start()
         built.intro.run()
@@ -698,15 +707,16 @@ class OverlayPresenter(
     }
 
     /**
-     * Aviso urgente: toda la pantalla en rojo, avatar grande con ondas que no paran, el mensaje enorme y solo
-     * dos respuestas (Voy / 5 minutos). El sonido se repite cada 10 segundos hasta que alguien contesta.
+     * Aviso urgente: toda la pantalla en rojo, avatar grande con ondas que no paran y el mensaje enorme, sin botones.
+     * El sonido se repite cada 10 segundos hasta que alguien lo cierra con el control (eso avisa que ya lo vieron).
      */
     private fun buildUrgent(m: Msg): Built {
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val running = mutableListOf<ValueAnimator>()
 
-        val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
+        // Cerrarlo con el control (Atrás u OK) significa que ya lo vieron: se le avisa a quien lo mandó
+        val outer = KeyFrame(ctx, onBack = { answer("visto", null) }, onConfirm = { answer("visto", null) }).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(0xFFD0313F.toInt(), 0xFF8E1428.toInt(), 0xFF5E0B1B.toInt())
@@ -795,34 +805,6 @@ class OverlayPresenter(
         }
         col.addView(body, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(8) })
 
-        val wrapper = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            alpha = 0f
-            translationY = ctx.dp(10).toFloat()
-        }
-        val btnRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        var firstButton: View? = null
-        val icons = mapOf("voy" to "🏃", "cinco_min" to "⏱")
-        urgentChoices.forEachIndexed { i, (choice, label) ->
-            val b = ctx.tvButton((icons[choice] ?: "") + "  " + label, Color.WHITE) { answer(choice, label) }
-            if (i == 0) firstButton = b
-            btnRow.addView(b, LinearLayout.LayoutParams(wrap, wrap).apply { if (i > 0) marginStart = ctx.dp(24) })
-        }
-        wrapper.addView(btnRow, LinearLayout.LayoutParams(wrap, wrap))
-        wrapper.addView(
-            TextView(ctx).apply {
-                text = T("Suena de nuevo hasta que alguien responda")
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                setTextColor(0xCCFFFFFF.toInt())
-                gravity = Gravity.CENTER
-            },
-            LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = ctx.dp(16) }
-        )
-        col.addView(wrapper, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(30) })
         outer.addView(col, FrameLayout.LayoutParams(match, wrap, Gravity.CENTER))
 
         // Barra de tiempo abajo
@@ -840,7 +822,6 @@ class OverlayPresenter(
             face.animate().scaleX(1f).scaleY(1f).setStartDelay(200).setDuration(600).setInterpolator(OvershootInterpolator(1.8f)).start()
             who.animate().alpha(1f).translationY(0f).setStartDelay(350).setDuration(420).setInterpolator(soft).start()
             body.animate().alpha(1f).translationY(0f).setStartDelay(450).setDuration(460).setInterpolator(soft).start()
-            wrapper.animate().alpha(1f).translationY(0f).setStartDelay(800).setDuration(420).setInterpolator(soft).start()
             typewrite(body, m.text, running, 650L)
 
             // La luz de atrás late sin parar
@@ -890,7 +871,7 @@ class OverlayPresenter(
             running.forEach { it.cancel() }
             running.clear()
         }
-        return Built(outer, bar, wrapper, firstButton, intro, stop)
+        return Built(outer, bar, null, null, intro, stop)
     }
 
     /** Si el mensaje llegó tarde (la TV estaba apagada), lo aclara. */

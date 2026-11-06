@@ -163,7 +163,7 @@ class RelayService : Service() {
             uid = "",
             from = Cfg.senderName,
             text = if (urgent) {
-                T("Necesito que vengas ya")
+                T("Llamame Urgente")
             } else if (withReply) {
                 T("¿Vienen a cenar? Probá los botones con el control.")
             } else {
