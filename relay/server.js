@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createPay } = require('./pay');
+const { createMail } = require('./mail');
 
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.TOKEN;
@@ -57,8 +58,15 @@ if (process.env.RESET_STATE === '1') {
   }
 }
 
+const mail = createMail();         // aviso por mail al dueño de cada compra (ver mail.js)
+if (process.env.MAIL_TEST === '1') {
+  mail.sendTest().then((r) => console.log(r.ok ? '[mail] mail de prueba enviado' : `[mail] mail de prueba falló: ${r.error}`));
+}
 const pay = createPay({           // cobro con Solana Pay + licencia (ver pay.js)
-  onPaid: (recibo) => broadcastAviso(recibo.titulo, recibo.texto, recibo.textos),
+  onPaid: (recibo, info) => {
+    broadcastAviso(recibo.titulo, recibo.texto, recibo.textos);
+    mail.notifyPayment(recibo, info);
+  },
 });
 
 let pinFails = 0;

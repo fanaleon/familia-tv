@@ -107,6 +107,7 @@ function createPay(opts = {}) {
     .split(',').map((u) => u.trim()).filter(Boolean);
   let rpcIdx = 0;
   const usdcMint = (env.USDC_MINT || USDC_MAINNET).trim();
+  const network = /devnet/i.test(rpcUrls[0] || '') || usdcMint !== USDC_MAINNET ? 'devnet' : 'mainnet';
   const commitment = env.PAY_COMMITMENT === 'finalized' ? 'finalized' : 'confirmed';
   const priceUsd = Number(env.PRICE_USD) > 0 ? Number(env.PRICE_USD) : 5;           // plan: hasta tvBase TV
   const priceExtraUsd = Number(env.PRICE_EXTRA_USD) > 0 ? Number(env.PRICE_EXTRA_USD) : 8; // cada grupo extra de TV
@@ -470,7 +471,7 @@ function createPay(opts = {}) {
     save();
     savePending();
     resolveAliases();
-    try { if (opts.onPaid) opts.onPaid(p.recibo, { producto: p.product, monto: p.amount, moneda: p.symbol }); } catch (e) { console.error('[pago] onPaid:', e.message); }
+    try { if (opts.onPaid) opts.onPaid(p.recibo, { producto: p.product, monto: p.amount, moneda: p.symbol, sig, usd: p.recibo.usd, vence: p.recibo.vence, red: network, capacidad: capacity() }); } catch (e) { console.error('[pago] onPaid:', e.message); }
     console.log(`[pago] ¡recibido! ${p.product} ${p.amount} ${p.symbol} (${sig.slice(0, 12)}…) -> capacidad ${capacity()} TV, licencia hasta ${state.licenseUntil ? new Date(state.licenseUntil).toISOString() : '—'}`);
   }
 
