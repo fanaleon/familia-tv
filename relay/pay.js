@@ -382,6 +382,24 @@ function createPay(opts = {}) {
     return { texto: lines.join('\n'), titulo: '✅ Pago recibido', usd, vence: pl.estado === 'activo' ? pl.hasta : null };
   }
 
+  // Varios pedidos iguales (mismo producto, medio y monto) son el mismo QR pedido más de una vez: cuando uno se
+  // paga, los otros quedan pagados también (sin sumar de nuevo), así la pantalla de la tele ve el recibo.
+  function resolveAliases() {
+    let changed = false;
+    for (const q of pending.values()) {
+      if (q.estado !== 'esperando') continue;
+      const e = state.paid.find((x) => x.producto === q.product && x.metodo === q.method && x.monto === q.amount &&
+        x.at >= q.createdAt && x.at <= q.expiresAt + graceMs + lateMs);
+      if (!e) continue;
+      q.estado = 'pagado';
+      q.sig = e.sig;
+      q.doneAt = e.at;
+      q.recibo = buildReceipt(q);
+      changed = true;
+    }
+    if (changed) savePending();
+  }
+
   function accept(p, sig) {
     const t = now();
     if (p.product === 'extra') {
@@ -398,6 +416,7 @@ function createPay(opts = {}) {
     p.doneAt = t;
     p.recibo = buildReceipt(p);
     savePending();
+    resolveAliases();
     try { if (opts.onPaid) opts.onPaid(p.recibo, { producto: p.product, monto: p.amount, moneda: p.symbol }); } catch (e) { console.error('[pago] onPaid:', e.message); }
     console.log(`[pago] ¡recibido! ${p.product} ${p.amount} ${p.symbol} (${sig.slice(0, 12)}…) -> capacidad ${capacity()} TV, licencia hasta ${state.licenseUntil ? new Date(state.licenseUntil).toISOString() : '—'}`);
   }
@@ -446,7 +465,8 @@ function createPay(opts = {}) {
       const at = (tx.blockTime || 0) * 1000;
       console.log(`[pago] movimiento en la billetera ${s.signature.slice(0, 10)}…: ${d.sol > 0n ? '+' + Number(d.sol) / 1e9 + ' SOL' : ''}${d.usdc > 0n ? ' +' + Number(d.usdc) / 1e6 + ' USDC' : ''} ${withRef ? '(con referencia de un pedido)' : '(sin referencia)'}`);
       if (withRef || !matchByAmount) continue;
-      const cand = waiting.find((p) => p.estado === 'esperando' && at >= p.createdAt - 60000 &&
+      // el más reciente primero: es el QR que está en pantalla
+      const cand = [...waiting].reverse().find((p) => p.estado === 'esperando' && at >= p.createdAt - 60000 &&
         (p.method === 'sol' ? d.sol === p.expected : d.usdc === p.expected));
       if (cand) {
         console.log('[pago] llegó sin referencia pero con el monto exacto de un pedido: se acepta');
@@ -457,6 +477,7 @@ function createPay(opts = {}) {
 
   // Un solo ciclo a la vez. Los pagos recientes se miran cada vez; los que ya vencieron, una vez por minuto.
   async function poll() {
+    resolveAliases();
     const t = now();
     const waiting = [...pending.values()].filter((p) => {
       if (p.estado !== 'esperando') return false;
