@@ -363,13 +363,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val logo = TextView(this).apply {
-            text = "📺"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            gravity = Gravity.CENTER
-            background = gradientBg(dp(16), intArrayOf(0xFF9A8BFF.toInt(), 0xFF3A2AB5.toInt()))
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_logo)
+            contentDescription = "Hey Family"
         }
-        header.addView(logo, LinearLayout.LayoutParams(dp(50), dp(50)))
+        header.addView(logo, LinearLayout.LayoutParams(dp(54), dp(54)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Hey Family", 26f, Pal.text, bold = true), lp(wrap, wrap))
         titles.addView(label(T("Mensajes para la tele de casa"), 13f, Pal.muted), lp(wrap, wrap))
@@ -562,6 +560,9 @@ class MainActivity : Activity() {
         // Control de la tele
         root.addView(buildControlCard(), lp(match, wrap, top = 18))
 
+        // Pie: "Built on Solana"
+        root.addView(solanaFooter(13f), lp(match, wrap, top = 26))
+
         renderProfile()
         renderOptions()
         renderColors()
@@ -582,6 +583,31 @@ class MainActivity : Activity() {
             background = appBackground()
             addView(root)
         }
+    }
+
+    /**
+     * Pie "Built on Solana · Solana Pay". Si el proyecto trae el logo oficial como recurso `solana_logo`
+     * (res/drawable/solana_logo.*, del brand kit de Solana), se muestra a la izquierda del texto.
+     */
+    private fun solanaFooter(sp: Float): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val logoRes = resources.getIdentifier("solana_logo", "drawable", packageName)
+        if (logoRes != 0) {
+            row.addView(
+                ImageView(this).apply {
+                    setImageResource(logoRes)
+                    adjustViewBounds = true
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                },
+                LinearLayout.LayoutParams(dp((sp * 1.6f).toInt()), dp((sp * 1.4f).toInt())).apply { marginEnd = dp(8) }
+            )
+        }
+        row.addView(label(T("Construido sobre Solana · Solana Pay"), sp, Pal.muted), lp(wrap, wrap))
+        row.alpha = 0.85f
+        return row
     }
 
     private fun buildControlCard(): View {
@@ -1345,13 +1371,11 @@ class MainActivity : Activity() {
             setPadding(dp(64), dp(20), dp(64), dp(170)) // abajo queda lugar para los botones
         }
 
-        val logo = TextView(this).apply {
-            text = "\uD83D\uDCFA"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 44f)
-            gravity = Gravity.CENTER
-            background = gradientBg(dp(26), intArrayOf(0xFF9A8BFF.toInt(), 0xFF3A2AB5.toInt()))
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_logo)
+            contentDescription = "Hey Family"
         }
-        root.addView(logo, LinearLayout.LayoutParams(dp(84), dp(84)))
+        root.addView(logo, LinearLayout.LayoutParams(dp(92), dp(92)))
 
         val titleView = label("Hey Family", 42f, Pal.text, bold = true)
         val subtitleView = label(T("Los mensajes de la familia aparecen directo en tu pantalla"), 20f, Pal.muted)
@@ -1457,6 +1481,14 @@ class MainActivity : Activity() {
             }
         )
         test.requestFocus()
+
+        // Pie: "Built on Solana"
+        rootFrame.addView(
+            solanaFooter(14f),
+            FrameLayout.LayoutParams(wrap, wrap, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = dp(10)
+            }
+        )
 
         // Reloj y fecha, arriba a la derecha
         val clockBox = LinearLayout(this).apply {

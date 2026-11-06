@@ -129,6 +129,7 @@ object Strings {
         "Escaneá el QR con tu billetera de Solana (Phantom, Solflare…)" to mapOf("en" to "Scan the QR with your Solana wallet (Phantom, Solflare…)", "pt" to "Escaneie o QR com sua carteira Solana (Phantom, Solflare…)"),
         "Plan: hasta %s TV · %s USD" to mapOf("en" to "Plan: up to %s TVs · %s USD", "pt" to "Plano: até %s TVs · %s USD"),
         "+%s TV · %s USD" to mapOf("en" to "+%s TVs · %s USD", "pt" to "+%s TVs · %s USD"),
+        "Construido sobre Solana · Solana Pay" to mapOf("en" to "Built on Solana · Solana Pay", "pt" to "Construído sobre Solana · Solana Pay"),
         "Preparando el pago…" to mapOf("en" to "Preparing the payment…", "pt" to "Preparando o pagamento…"),
         "Pagar USDC" to mapOf("en" to "Pay with USDC", "pt" to "Pagar com USDC"),
         "Pagar SOL" to mapOf("en" to "Pay with SOL", "pt" to "Pagar com SOL"),
