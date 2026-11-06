@@ -34,6 +34,13 @@ object RelayState {
     @Volatile var lastFrom: String = ""
     @Volatile var lastText: String = ""
     @Volatile var lastTs: Long = 0L
+
+    /** Nombre que el servidor le dio a esta TV (se cambia desde el móvil). */
+    @Volatile var tvName: String = ""
+
+    /** El servidor rechazó esta TV porque ya hay [capacity] vinculadas. */
+    @Volatile var limit: Boolean = false
+    @Volatile var capacity: Int = 0
 }
 
 object Net {
@@ -66,6 +73,23 @@ object Profile {
         val fresh = UUID.randomUUID().toString()
         p.edit().putString("uid", fresh).apply()
         return fresh
+    }
+
+    /** Identifica a esta TV ante el servidor (para que cada una tenga su cola y su bloqueo). */
+    fun tvId(ctx: Context): String {
+        val p = prefs(ctx)
+        val saved = p.getString("tv_id", null)
+        if (saved != null) return saved
+        val fresh = "tv-" + UUID.randomUUID().toString()
+        p.edit().putString("tv_id", fresh).apply()
+        return fresh
+    }
+
+    /** Destino elegido en el móvil: null = todas las TV, si no el id de una. */
+    fun tvTarget(ctx: Context): String? = prefs(ctx).getString("tv_target", null)
+
+    fun setTvTarget(ctx: Context, id: String?) {
+        prefs(ctx).edit().putString("tv_target", id).apply()
     }
 
     fun name(ctx: Context): String =

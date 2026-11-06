@@ -477,6 +477,16 @@ function handleTvMessage(t, m) {
 
 function attachTv(ws, id, name) {
   let t = tvs.get(id);
+  // Migración: la app vieja de la TV no mandaba id y quedó anotada como 'tv-principal'. Cuando la misma TV se
+  // actualiza y se presenta con su id propio, toma ese lugar en vez de ocupar uno más.
+  if (!t && id !== DEFAULT_TV_ID && tvs.has(DEFAULT_TV_ID) && !tvOnline(tvs.get(DEFAULT_TV_ID))) {
+    const legacy = tvs.get(DEFAULT_TV_ID);
+    tvs.delete(DEFAULT_TV_ID);
+    t = { ...legacy, id, ws: null };
+    tvs.set(id, t);
+    saveTvs();
+    console.log(`[tv] "${t.name}" se actualizó: ahora tiene su propio id`);
+  }
   if (!t) {
     // TV nueva: entra solo si queda lugar. Si no, se le avisa para que ofrezca comprar más lugares.
     if (tvs.size >= pay.capacity()) {
@@ -494,6 +504,7 @@ function attachTv(ws, id, name) {
   }
   t.ws = ws;
   console.log(`[ws] TV conectada: ${t.name}`);
+  try { ws.send(JSON.stringify({ type: 'hello', name: t.name, capacidad: pay.capacity(), usadas: tvs.size })); } catch (e) { /* cerrada */ }
 
   ws.on('message', (raw) => {
     ws.isAlive = true;
