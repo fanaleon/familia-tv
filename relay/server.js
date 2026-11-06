@@ -48,6 +48,15 @@ const TZ_OFFSET_MIN = Number.isFinite(Number(process.env.TZ_OFFSET_MIN)) && proc
   ? Number(process.env.TZ_OFFSET_MIN)
   : -180;
 
+// RESET_STATE=1: al arrancar borra TV, pagos, licencia y avisos (para empezar una prueba de cero).
+// Sacar la variable después del primer arranque, si no se vuelve a borrar en cada reinicio.
+if (process.env.RESET_STATE === '1') {
+  const dir = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
+  for (const f of ['tvs.json', 'licencia.json', 'pagos.json', 'avisos.json']) {
+    try { fs.unlinkSync(path.join(dir, f)); console.log('[reset] borrado', f); } catch (_) {}
+  }
+}
+
 const pay = createPay({           // cobro con Solana Pay + licencia (ver pay.js)
   onPaid: (recibo) => broadcastAviso(recibo.titulo, recibo.texto),
 });
