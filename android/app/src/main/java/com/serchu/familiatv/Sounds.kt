@@ -125,39 +125,26 @@ object Sounds {
         "campana" -> campana()
         "gota" -> gota()
         "silbido" -> silbido()
-        "guau" -> guau()
+        "toc" -> toc()
         else -> ShortArray(0)
     }
 
-    /**
-     * Ladrido de perro (lo usa el perro guardián de la pantalla de bloqueo; no es un sonido de aviso).
-     * Un tono grave que arranca más agudo y baja, con armónicos reforzados donde un perro tiene sus
-     * "vocales" (que pasan de una "a" abierta a una "u") y un poco de aire al principio.
-     */
-    private fun guau(): ShortArray {
-        val buf = FloatArray(RATE * 32 / 100)
-        val rnd = java.util.Random(11)
-        var ph = 0.0
+    /** Golpe de nudillos en el vidrio (lo usa el guardia de la pantalla de bloqueo; no es un sonido de aviso). */
+    private fun toc(): ShortArray {
+        val buf = FloatArray(RATE * 3 / 10)
+        val rnd = java.util.Random(7)
         var peak = 0.0
         for (i in buf.indices) {
             val t = i.toDouble() / RATE
-            val f0 = 330.0 - 120.0 * Math.min(1.0, t / 0.2) + 30.0 * Math.exp(-t / 0.02)
-            ph += 2 * Math.PI * f0 / RATE
-            val formant = 900.0 - 400.0 * Math.min(1.0, t / 0.2)
-            var v = 0.0
-            for (k in 1..14) {
-                val fk = f0 * k
-                val a = Math.exp(-Math.pow((fk - formant) / 450.0, 2.0)) +
-                    0.55 * Math.exp(-Math.pow((fk - 2000.0) / 800.0, 2.0))
-                v += a * Math.sin(k * ph) / Math.pow(k.toDouble(), 0.3)
-            }
-            val env = (1.0 - Math.exp(-t / 0.006)) * Math.exp(-t / 0.10)
-            val noise = (rnd.nextDouble() * 2 - 1) * 0.5 * Math.exp(-t / 0.03)
-            val x = (v + noise) * env
+            val body = Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t / 0.030) +
+                0.6 * Math.sin(2 * Math.PI * 410 * t) * Math.exp(-t / 0.018) +
+                0.3 * Math.sin(2 * Math.PI * 740 * t) * Math.exp(-t / 0.010)
+            val click = if (t < 0.004) (rnd.nextDouble() * 2 - 1) * (1 - t / 0.004) else 0.0
+            val x = 0.75 * body + 0.5 * click
             buf[i] = x.toFloat()
             if (Math.abs(x) > peak) peak = Math.abs(x)
         }
-        if (peak > 0.0) for (i in buf.indices) buf[i] = (buf[i] / peak * 0.95).toFloat()
+        if (peak > 0.0) for (i in buf.indices) buf[i] = (buf[i] / peak * 0.95).toFloat() // bien fuerte
         return toPcm(buf)
     }
 
