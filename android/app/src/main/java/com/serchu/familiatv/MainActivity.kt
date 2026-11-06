@@ -371,7 +371,7 @@ class MainActivity : Activity() {
         }
         header.addView(logo, LinearLayout.LayoutParams(dp(50), dp(50)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titles.addView(label("Familia TV", 26f, Pal.text, bold = true), lp(wrap, wrap))
+        titles.addView(label("Hey Family", 26f, Pal.text, bold = true), lp(wrap, wrap))
         titles.addView(label(T("Mensajes para la tele de casa"), 13f, Pal.muted), lp(wrap, wrap))
         header.addView(titles, LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = dp(14) })
         // Campana: bandeja de notificaciones (pagos recibidos, avisos de vencimiento, respuestas)
@@ -871,7 +871,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     when {
                         code in 200..299 -> sendDone(true, delivered, askedReply, null, total, entregadas)
-                        code == 409 -> sendDone(false, false, askedReply, T("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele."))
+                        code == 409 -> sendDone(false, false, askedReply, T("Todavía no hay ninguna TV vinculada. Abrí Hey Family en la tele."))
                         code == 404 -> {
                             sendDone(false, false, askedReply, T("Esa TV ya no está vinculada."))
                             fetchStatus()
@@ -1264,7 +1264,7 @@ class MainActivity : Activity() {
                 }
                 fetchStatus() // el estado por TV lo manda el servidor
             }
-            code == 409 -> showFeedback(T("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele."), Pal.bad)
+            code == 409 -> showFeedback(T("Todavía no hay ninguna TV vinculada. Abrí Hey Family en la tele."), Pal.bad)
             code == 404 -> {
                 showFeedback(T("Esa TV ya no está vinculada."), Pal.bad)
                 fetchStatus()
@@ -1353,7 +1353,7 @@ class MainActivity : Activity() {
         }
         root.addView(logo, LinearLayout.LayoutParams(dp(84), dp(84)))
 
-        val titleView = label("Familia TV", 42f, Pal.text, bold = true)
+        val titleView = label("Hey Family", 42f, Pal.text, bold = true)
         val subtitleView = label(T("Los mensajes de la familia aparecen directo en tu pantalla"), 20f, Pal.muted)
         root.addView(titleView, lp(wrap, wrap, top = 12))
         root.addView(subtitleView, lp(wrap, wrap, top = 2))
@@ -1402,7 +1402,7 @@ class MainActivity : Activity() {
             lp(wrap, wrap)
         )
         tvPermBox.addView(
-            label(T("Tocá el botón y activá «Mostrar sobre otras apps» para Familia TV."), 15f, Pal.text),
+            label(T("Tocá el botón y activá «Mostrar sobre otras apps» para Hey Family."), 15f, Pal.text),
             lp(wrap, wrap, top = 4)
         )
         tvPermBox.addView(
@@ -1732,7 +1732,7 @@ class MainActivity : Activity() {
                 if (recibo.isNotBlank()) {
                     payMessage(recibo, Pal.ok)
                 } else if (o.optJSONObject("pago")?.optString("producto") == "extra") {
-                    payMessage(T("Gracias. Ya podés vincular hasta %s TV: prendé la nueva y abrí Familia TV.", plan?.optInt("capacidad") ?: 0), Pal.ok)
+                    payMessage(T("Gracias. Ya podés vincular hasta %s TV: prendé la nueva y abrí Hey Family.", plan?.optInt("capacidad") ?: 0), Pal.ok)
                 } else {
                     payMessage(T("Gracias. Tu plan está activo hasta el %s.", fecha), Pal.ok)
                 }

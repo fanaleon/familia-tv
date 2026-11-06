@@ -1,6 +1,6 @@
-# Familia TV: datos que maneja la app
+# Hey Family: datos que maneja la app
 
-Familia TV no tiene cuentas ni pide datos personales. Guarda lo mínimo para llevar mensajes del móvil a la TV y cobrar el plan, y los mensajes no se conservan más de 5 minutos.
+Hey Family no tiene cuentas ni pide datos personales. Guarda lo mínimo para llevar mensajes del móvil a la TV y cobrar el plan, y los mensajes no se conservan más de 5 minutos.
 
 ## Qué se guarda, dónde y por cuánto tiempo
 
@@ -33,7 +33,7 @@ Familia TV no tiene cuentas ni pide datos personales. Guarda lo mínimo para lle
 El plan se cobra en USDC o SOL a una billetera del dueño. La app no pide nombre, email ni tarjeta, y el servidor no guarda la billetera de quien paga.
 
 - Del pago, el servidor guarda la firma de la transacción, el producto, el monto, la moneda y la fecha. Sirve para no aceptar dos veces el mismo pago y para extender la licencia.
-- La firma de la transacción es pública: cualquiera puede verla en la blockchain de Solana, con la billetera de quien pagó, pero eso no pasa por Familia TV.
+- La firma de la transacción es pública: cualquiera puede verla en la blockchain de Solana, con la billetera de quien pagó, pero eso no pasa por Hey Family.
 - Para detectar el pago el servidor consulta la red de Solana con el SDK oficial `@solana/pay`, y consulta el precio de SOL en Coinbase o Kraken (una consulta pública, sin datos de usuarios).
 - Aviso por mail al dueño (opcional): si se configura, cada compra le llega al dueño con el plan, el monto, las TV habilitadas, el vencimiento y el link a la transacción. No se manda nada a los usuarios.
 - Hoy la app cobra en la red de pruebas (devnet), sin dinero real.

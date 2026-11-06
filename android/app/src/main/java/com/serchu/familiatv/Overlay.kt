@@ -282,8 +282,8 @@ class OverlayPresenter(
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val match = ViewGroup.LayoutParams.MATCH_PARENT
 
-        // Avisos del sistema (los manda "Familia TV"): sin foto, con un ícono; el de vencimiento va en naranja
-        val system = m.uid.isBlank() && m.from == "Familia TV"
+        // Avisos del sistema (los manda "Hey Family"): sin foto, con un ícono; el de vencimiento va en naranja
+        val system = m.uid.isBlank() && (m.from == "Hey Family" || m.from == "Familia TV")
         // Color que eligió quien mandó el mensaje (los de la versión anterior no traen y quedan en violeta)
         val accent = if (system && m.text.startsWith("⏰")) Pal.warn else (Pal.byKey(m.color) ?: Pal.accent)
         val accentText = lighten(accent, 0.25f)
