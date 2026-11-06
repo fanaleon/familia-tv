@@ -85,6 +85,15 @@ object Profile {
         return fresh
     }
 
+    /** Marca un aviso del sistema como mostrado. Devuelve false si ya se había mostrado (el servidor puede reenviarlos). */
+    fun markAviso(ctx: Context, aid: String): Boolean {
+        val p = prefs(ctx)
+        val seen = (p.getString("avisos_vistos", "") ?: "").split(',').filter { it.isNotBlank() }
+        if (aid in seen) return false
+        p.edit().putString("avisos_vistos", (seen + aid).takeLast(30).joinToString(",")).apply()
+        return true
+    }
+
     /** Destino elegido en el móvil: null = todas las TV, si no el id de una. */
     fun tvTarget(ctx: Context): String? = prefs(ctx).getString("tv_target", null)
 

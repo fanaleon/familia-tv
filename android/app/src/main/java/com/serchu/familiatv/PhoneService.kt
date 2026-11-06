@@ -49,7 +49,20 @@ class PhoneService : Service() {
         super.onDestroy()
     }
 
+    /** Avisos del sistema: pago recibido, plan por vencer. */
+    private fun handleAviso(o: JSONObject) {
+        val aid = o.optString("aid")
+        if (aid.isBlank()) return
+        link.send(JSONObject().put("type", "ack").put("id", aid))
+        if (!Profile.markAviso(this, aid)) return
+        Notifs.post(this, aid.hashCode(), o.optString("title", "Familia TV"), o.optString("text"))
+    }
+
     private fun handle(o: JSONObject) {
+        if (o.optString("type") == "aviso") {
+            handleAviso(o)
+            return
+        }
         if (o.optString("type") != "reply") return
         val rid = o.optString("rid")
         if (rid.isBlank()) return

@@ -48,7 +48,9 @@ const TZ_OFFSET_MIN = Number.isFinite(Number(process.env.TZ_OFFSET_MIN)) && proc
   ? Number(process.env.TZ_OFFSET_MIN)
   : -180;
 
-const pay = createPay();         // cobro con Solana Pay + licencia (ver pay.js)
+const pay = createPay({           // cobro con Solana Pay + licencia (ver pay.js)
+  onPaid: (recibo) => broadcastAviso(recibo.titulo, recibo.texto),
+});
 
 let pinFails = 0;
 let pinBlockedUntil = 0;
@@ -150,6 +152,46 @@ function sendToTv(t, msg) {
   } catch (e) {
     return false;
   }
+}
+
+// ---------- avisos del sistema (pago recibido, plan por vencer) ----------
+// Llegan como notificación a los móviles; los que estaban sin conexión los reciben al volver.
+const avisos = [];                // { aid, title, text, ts }
+const avisosAcked = new Map();    // uid -> Set de aid ya recibidos
+const MAX_AVISOS = 20;
+const AVISO_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+function sendAviso(uid, a) {
+  const ws = phones.get(uid);
+  if (!isOpen(ws)) return;
+  try { ws.send(JSON.stringify({ type: 'aviso', aid: a.aid, title: a.title, text: a.text, ts: a.ts })); } catch (e) { /* se reenvía al volver */ }
+}
+
+function broadcastAviso(title, text) {
+  const a = { aid: crypto.randomUUID(), title, text: String(text).slice(0, 600), ts: Date.now() };
+  avisos.push(a);
+  while (avisos.length > MAX_AVISOS) avisos.shift();
+  for (const uid of phones.keys()) sendAviso(uid, a);
+  console.log(`[aviso] ${title}`);
+}
+
+// Mensaje a todas las TV, como uno más de la familia (si alguna está apagada, queda en cola)
+function noticeToTvs(text) {
+  const msg = { id: crypto.randomUUID(), uid: '', from: 'Familia TV', text: String(text).slice(0, 500), avatar: undefined, duration: 'larga', color: '', reply: false, ts: Date.now() };
+  for (const t of tvs.values()) {
+    t.pending.push(msg);
+    if (t.pending.length > MAX_PENDING) t.pending.shift();
+    sendToTv(t, msg);
+  }
+}
+
+// Cada 10 minutos: si falta poco para que venza el plan, se avisa (una sola vez por licencia)
+function checkReminder() {
+  const r = pay.dueReminder();
+  if (!r) return;
+  broadcastAviso(r.titulo, r.texto);
+  noticeToTvs(`${r.titulo}\n${r.texto}`);
+  pay.markReminded(r.until);
 }
 
 function sendReplyToPhone(uid, entry) {
@@ -537,6 +579,12 @@ function attachPhone(ws, uid) {
     ws.isAlive = true;
     let m;
     try { m = JSON.parse(raw.toString()); } catch (e) { return; }
+    if (m && m.type === 'ack' && typeof m.id === 'string' && avisos.some((a) => a.aid === m.id)) {
+      const set = avisosAcked.get(uid) || new Set();
+      set.add(m.id);
+      avisosAcked.set(uid, set);
+      return;
+    }
     if (m && m.type === 'ack' && typeof m.id === 'string') {
       const list = replies.get(uid);
       if (!list) return;
@@ -553,6 +601,11 @@ function attachPhone(ws, uid) {
   // Respuestas que llegaron mientras el móvil estaba sin conexión
   prune();
   for (const entry of replies.get(uid) || []) sendReplyToPhone(uid, entry);
+  // Avisos del sistema que todavía no recibió (últimos 3 días)
+  const got = avisosAcked.get(uid);
+  for (const a of avisos) {
+    if (Date.now() - a.ts < AVISO_AGE_MS && !(got && got.has(a.aid))) sendAviso(uid, a);
+  }
 }
 
 wss.on('connection', (ws, req) => {
@@ -578,4 +631,6 @@ setInterval(() => {
 }, 30000);
 
 loadTvs();
+setInterval(checkReminder, 10 * 60 * 1000);
+setTimeout(checkReminder, 20 * 1000);
 server.listen(PORT, () => console.log(`Relay escuchando en :${PORT}`));
