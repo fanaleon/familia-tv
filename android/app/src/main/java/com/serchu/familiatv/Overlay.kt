@@ -1,10 +1,13 @@
 package com.serchu.familiatv
 
+import android.animation.ValueAnimator
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
@@ -18,13 +21,16 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.ColorUtils
 
 /**
  * Un mensaje que llegó a la TV.
@@ -101,7 +107,15 @@ class OverlayPresenter(
     private val onReply: (Msg, String) -> Unit
 ) {
 
-    private class Built(val root: View, val bar: View, val buttons: LinearLayout?, val first: View?)
+    /** [intro] arranca las animaciones de entrada; [stop] frena las que se repiten (aura, ondas). */
+    private class Built(
+        val root: View,
+        val bar: View,
+        val buttons: LinearLayout?,
+        val first: View?,
+        val intro: Runnable,
+        val stop: Runnable
+    )
 
     private val choices get() = listOf("ok" to "OK", "voy" to T("Voy"), "ahora_no" to T("Ahora no"))
 
@@ -143,6 +157,7 @@ class OverlayPresenter(
         main.removeCallbacks(repeatChime)
         queue.clear()
         current?.let {
+            it.stop.run()
             try { wm.removeView(it.root) } catch (e: Exception) { /* ya no estaba */ }
         }
         current = null
@@ -174,7 +189,8 @@ class OverlayPresenter(
         chime()
         if (m.needsReply) main.postDelayed(repeatChime, 20_000)
         built.root.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
-            .setDuration(450).setInterpolator(OvershootInterpolator(1.05f)).start()
+            .setDuration(520).setInterpolator(OvershootInterpolator(1.1f)).start()
+        built.intro.run()
         built.bar.animate().scaleX(0f)
             .setDuration(duration).setInterpolator(LinearInterpolator()).start()
         built.first?.let { f -> built.root.post { f.requestFocus() } }
@@ -188,8 +204,10 @@ class OverlayPresenter(
         main.removeCallbacks(autoHide)
         main.removeCallbacks(afterSent)
         main.removeCallbacks(repeatChime)
-        b.root.animate().alpha(0f).translationY(-ctx.dp(40).toFloat()).setDuration(300)
+        b.root.animate().alpha(0f).translationY(-ctx.dp(40).toFloat()).scaleX(0.97f).scaleY(0.97f).setDuration(320)
+            .setInterpolator(DecelerateInterpolator())
             .withEndAction {
+                b.stop.run()
                 try { wm.removeView(b.root) } catch (e: Exception) { /* ya no estaba */ }
                 if (current === b) {
                     current = null
@@ -219,16 +237,19 @@ class OverlayPresenter(
             return
         }
         row.removeAllViews()
-        row.addView(
-            TextView(ctx).apply {
-                text = T("Respuesta enviada: %s", label)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                setTextColor(Pal.ok)
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-            },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        val sent = TextView(ctx).apply {
+            text = "✓  " + T("Respuesta enviada: %s", label)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
+            setTextColor(Pal.ok)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            scaleX = 0.8f
+            scaleY = 0.8f
+            alpha = 0f
+        }
+        row.addView(sent, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        sent.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(380).setInterpolator(OvershootInterpolator(1.8f)).start()
+        b.stop.run()
         b.bar.animate().cancel()
         main.postDelayed(afterSent, 1_500)
     }
@@ -260,38 +281,121 @@ class OverlayPresenter(
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val match = ViewGroup.LayoutParams.MATCH_PARENT
 
+        // Avisos del sistema (los manda "Familia TV"): sin foto, con un ícono; el de vencimiento va en naranja
+        val system = m.uid.isBlank() && m.from == "Familia TV"
         // Color que eligió quien mandó el mensaje (los de la versión anterior no traen y quedan en violeta)
-        val accent = Pal.byKey(m.color) ?: Pal.accent
+        val accent = if (system && m.text.startsWith("⏰")) Pal.warn else (Pal.byKey(m.color) ?: Pal.accent)
         val accentText = lighten(accent, 0.25f)
+        val radius = ctx.dp(34)
+        val cardW = minOf(ctx.resources.displayMetrics.widthPixels - ctx.dp(112), ctx.dp(980))
+        val pulses = if (m.needsReply) ValueAnimator.INFINITE else 2   // ondas del avatar: sin parar si espera respuesta
+        val running = mutableListOf<ValueAnimator>()
 
         val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
-            setPadding(ctx.dp(48), ctx.dp(32), ctx.dp(48), 0)
+            setPadding(ctx.dp(48), ctx.dp(30), ctx.dp(48), ctx.dp(22))
+            clipChildren = false
+            clipToPadding = false
             alpha = 0f
-            translationY = -ctx.dp(70).toFloat()
-            scaleX = 0.96f
-            scaleY = 0.96f
+            translationY = -ctx.dp(80).toFloat()
+            scaleX = 0.95f
+            scaleY = 0.95f
+        }
+        val stack = FrameLayout(ctx).apply {
+            clipChildren = false
+            clipToPadding = false
         }
 
-        val card = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = glassBg(ctx.dp(30), ctx.dp(2), accent)
-            setPadding(ctx.dp(30), ctx.dp(24), ctx.dp(30), ctx.dp(22))
+        // Aura suave alrededor de la tarjeta: dos halos que "respiran"
+        fun halo(margin: Int, alpha: Int): View = View(ctx).apply {
+            background = roundedBg(withAlpha(accent, alpha), radius + ctx.dp(margin))
+        }
+        fun haloParams(margin: Int) = FrameLayout.LayoutParams(match, match).apply {
+            setMargins(-ctx.dp(margin), -ctx.dp(margin), -ctx.dp(margin), -ctx.dp(margin))
+        }
+        val halo2 = halo(16, 0x1C)
+        val halo1 = halo(7, 0x30)
+        stack.addView(halo2, haloParams(16))
+        stack.addView(halo1, haloParams(7))
+
+        // Tarjeta: degradé oscuro teñido con el color elegido, borde de color, esquinas recortadas
+        val tint = ColorUtils.blendARGB(0xFF181A38.toInt(), accent, 0.22f)
+        val cardFrame = FrameLayout(ctx).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(withAlpha(tint, 0xF4), 0xF41B1D3C.toInt(), 0xF4121429.toInt())
+            ).apply {
+                cornerRadius = radius.toFloat()
+                setStroke(ctx.dp(2), withAlpha(accent, 0xAA))
+            }
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, radius.toFloat())
+                }
+            }
         }
 
-        // Línea de color arriba de la tarjeta
-        card.addView(
-            View(ctx).apply {
-                background = gradientBg(
-                    ctx.dp(2),
-                    intArrayOf(accentText, accent, withAlpha(accent, 0x00)),
-                    GradientDrawable.Orientation.LEFT_RIGHT
-                )
-            },
-            LinearLayout.LayoutParams(match, ctx.dp(4)).apply { bottomMargin = ctx.dp(20) }
+        // Resplandor del color en la esquina de arriba
+        val glow = View(ctx).apply {
+            background = GradientDrawable().apply {
+                setGradientType(GradientDrawable.RADIAL_GRADIENT)
+                setGradientRadius(ctx.dp(210).toFloat())
+                setColors(intArrayOf(withAlpha(accent, 0x66), withAlpha(accent, 0x00)))
+                setGradientCenter(0.5f, 0.5f)
+            }
+        }
+        cardFrame.addView(
+            glow,
+            FrameLayout.LayoutParams(ctx.dp(420), ctx.dp(420)).apply { setMargins(-ctx.dp(150), -ctx.dp(190), 0, 0) }
         )
 
-        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(ctx.avatarRing(m.from, m.avatar, 88, accent), LinearLayout.LayoutParams(ctx.dp(88), ctx.dp(88)))
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(ctx.dp(30), ctx.dp(26), ctx.dp(30), ctx.dp(24))
+        }
+
+        // Avatar (o ícono) con ondas que se expanden, como una llamada entrante
+        val avatarBox = FrameLayout(ctx).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val rings = List(2) {
+            View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.TRANSPARENT)
+                    setStroke(ctx.dp(3), accentText)
+                }
+                alpha = 0f
+            }
+        }
+        rings.forEach { avatarBox.addView(it, FrameLayout.LayoutParams(match, match)) }
+        val face: View = if (system) {
+            TextView(ctx).apply {
+                text = if (m.text.startsWith("⏰")) "⏰" else "📺"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 44f)
+                gravity = Gravity.CENTER
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(lighten(accent, 0.3f), accent, darken(accent, 0.3f))
+                ).apply { shape = GradientDrawable.OVAL }
+            }
+        } else {
+            ctx.avatarRing(m.from, m.avatar, 96, accent)
+        }
+        face.scaleX = 0f
+        face.scaleY = 0f
+        avatarBox.addView(face, FrameLayout.LayoutParams(match, match))
+
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        row.addView(avatarBox, LinearLayout.LayoutParams(ctx.dp(96), ctx.dp(96)))
 
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
@@ -299,17 +403,30 @@ class OverlayPresenter(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(
-            TextView(ctx).apply {
-                text = m.from
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        val pill = TextView(ctx).apply {
+            text = m.from
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            setTextColor(onColor(accent))
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(ctx.dp(18), ctx.dp(6), ctx.dp(18), ctx.dp(6))
+            background = gradientBg(ctx.dp(20), intArrayOf(accent, darken(accent, 0.25f)), GradientDrawable.Orientation.LEFT_RIGHT)
+            alpha = 0f
+            translationX = -ctx.dp(30).toFloat()
+        }
+        header.addView(pill, LinearLayout.LayoutParams(wrap, wrap))
+        var replyChip: TextView? = null
+        if (m.needsReply) {
+            replyChip = TextView(ctx).apply {
+                text = "↩  " + T("Espera tu respuesta")
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                 setTextColor(accentText)
                 typeface = Typeface.DEFAULT_BOLD
-                setPadding(ctx.dp(16), ctx.dp(6), ctx.dp(16), ctx.dp(6))
-                background = roundedBg(withAlpha(accent, 0x33), ctx.dp(18))
-            },
-            LinearLayout.LayoutParams(wrap, wrap)
-        )
+                setPadding(ctx.dp(14), ctx.dp(5), ctx.dp(14), ctx.dp(5))
+                background = roundedBg(withAlpha(accent, 0x26), ctx.dp(18), withAlpha(accent, 0x88), ctx.dp(1))
+                alpha = 0f
+            }
+            header.addView(replyChip, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = ctx.dp(12) })
+        }
         ageText(m.ts)?.let { age ->
             header.addView(
                 TextView(ctx).apply {
@@ -322,54 +439,148 @@ class OverlayPresenter(
         }
         col.addView(header, LinearLayout.LayoutParams(wrap, wrap))
 
-        col.addView(TextView(ctx).apply {
+        val body = TextView(ctx).apply {
             text = m.text
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 38f)
             setTextColor(Pal.text)
-            setLineSpacing(0f, 1.1f)
+            setLineSpacing(0f, 1.12f)
             maxLines = 6
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, ctx.dp(10), 0, 0)
-        })
-        row.addView(
-            col,
-            LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = ctx.dp(24) }
-        )
-        card.addView(row, LinearLayout.LayoutParams(match, wrap))
+            setPadding(0, ctx.dp(12), 0, 0)
+            alpha = 0f
+            translationY = ctx.dp(14).toFloat()
+        }
+        col.addView(body)
+        row.addView(col, LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = ctx.dp(26) })
+        content.addView(row, LinearLayout.LayoutParams(match, wrap))
 
         // Botones de respuesta (solo si el mensaje los pidió)
         var buttons: LinearLayout? = null
         var firstButton: View? = null
         if (m.needsReply) {
+            val wrapper = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                alpha = 0f
+                translationY = ctx.dp(10).toFloat()
+            }
             val btnRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            val icons = mapOf("ok" to "✓", "voy" to "🏃", "ahora_no" to "✋")
             choices.forEachIndexed { i, (choice, label) ->
-                val b = ctx.tvButton(label, accent) { answer(choice, label) }
+                val b = ctx.tvButton((icons[choice] ?: "") + "  " + label, accent) { answer(choice, label) }
                 if (i == 0) firstButton = b
                 btnRow.addView(
                     b,
                     LinearLayout.LayoutParams(0, wrap, 1f).apply { if (i > 0) marginStart = ctx.dp(16) }
                 )
             }
-            card.addView(btnRow, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(24) })
-            buttons = btnRow
+            wrapper.addView(btnRow, LinearLayout.LayoutParams(match, wrap))
+            wrapper.addView(
+                TextView(ctx).apply {
+                    text = T("Elegí con ← → y confirmá con OK")
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTextColor(Pal.muted)
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(12) }
+            )
+            content.addView(wrapper, LinearLayout.LayoutParams(match, wrap).apply { topMargin = ctx.dp(22) })
+            buttons = wrapper
         }
 
-        // Barrita que se va achicando: muestra cuánto falta para que desaparezca
+        // Barra de tiempo pegada al borde de abajo: se va achicando hasta que el mensaje desaparece
         val bar = View(ctx).apply {
-            background = gradientBg(
-                ctx.dp(3),
-                intArrayOf(accent, accentText),
-                GradientDrawable.Orientation.LEFT_RIGHT
-            )
+            background = gradientBg(0, intArrayOf(accent, accentText), GradientDrawable.Orientation.LEFT_RIGHT)
             pivotX = 0f
         }
-        card.addView(
-            bar,
-            LinearLayout.LayoutParams(match, ctx.dp(5)).apply { topMargin = ctx.dp(22) }
+        val track = FrameLayout(ctx).apply { setBackgroundColor(0x14FFFFFF) }
+        track.addView(bar, FrameLayout.LayoutParams(match, match))
+        content.addView(
+            track,
+            LinearLayout.LayoutParams(match, ctx.dp(6)).apply {
+                setMargins(-ctx.dp(30), ctx.dp(22), -ctx.dp(30), -ctx.dp(24))
+            }
         )
+        cardFrame.addView(content, FrameLayout.LayoutParams(match, wrap))
 
-        outer.addView(card, FrameLayout.LayoutParams(match, wrap))
-        return Built(outer, bar, buttons, firstButton)
+        // Un destello que cruza la tarjeta al aparecer
+        val sheen = View(ctx).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0x00FFFFFF, 0x2EFFFFFF, 0x00FFFFFF)
+            )
+            translationX = -ctx.dp(240).toFloat()
+        }
+        cardFrame.addView(sheen, FrameLayout.LayoutParams(ctx.dp(200), match))
+
+        stack.addView(cardFrame, FrameLayout.LayoutParams(match, wrap))
+        outer.addView(stack, FrameLayout.LayoutParams(cardW, wrap, Gravity.CENTER_HORIZONTAL))
+
+        val intro = Runnable {
+            val soft = DecelerateInterpolator()
+            face.animate().scaleX(1f).scaleY(1f).setStartDelay(140).setDuration(560)
+                .setInterpolator(OvershootInterpolator(1.7f)).start()
+            pill.animate().alpha(1f).translationX(0f).setStartDelay(220).setDuration(400).setInterpolator(soft).start()
+            replyChip?.animate()?.alpha(1f)?.setStartDelay(420)?.setDuration(400)?.start()
+            body.animate().alpha(1f).translationY(0f).setStartDelay(300).setDuration(440).setInterpolator(soft).start()
+            buttons?.animate()?.alpha(1f)?.translationY(0f)?.setStartDelay(520)?.setDuration(420)?.setInterpolator(soft)?.start()
+
+            // Destello de lado a lado
+            ValueAnimator.ofFloat(-ctx.dp(240).toFloat(), cardW + ctx.dp(40).toFloat()).apply {
+                duration = 1100
+                startDelay = 450
+                interpolator = soft
+                addUpdateListener { sheen.translationX = it.animatedValue as Float }
+                start()
+                running.add(this)
+            }
+            // Ondas alrededor del avatar
+            rings.forEachIndexed { i, ring ->
+                ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 1900
+                    startDelay = 650L + i * 950L
+                    repeatCount = pulses
+                    interpolator = soft
+                    addUpdateListener {
+                        val f = it.animatedFraction
+                        ring.scaleX = 1f + 0.55f * f
+                        ring.scaleY = 1f + 0.55f * f
+                        ring.alpha = 0.75f * (1f - f)
+                    }
+                    start()
+                    running.add(this)
+                }
+            }
+            // El aura respira
+            ValueAnimator.ofFloat(0.5f, 1f).apply {
+                duration = 2200
+                repeatCount = ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                addUpdateListener {
+                    val v = it.animatedValue as Float
+                    halo1.alpha = v
+                    halo2.alpha = 1.5f - v
+                }
+                start()
+                running.add(this)
+            }
+            // "Espera tu respuesta" late suavemente
+            replyChip?.let { chip ->
+                ValueAnimator.ofFloat(1f, 0.55f).apply {
+                    duration = 900
+                    startDelay = 1000
+                    repeatCount = ValueAnimator.INFINITE
+                    repeatMode = ValueAnimator.REVERSE
+                    addUpdateListener { chip.alpha = it.animatedValue as Float }
+                    start()
+                    running.add(this)
+                }
+            }
+        }
+        val stop = Runnable {
+            running.forEach { it.cancel() }
+            running.clear()
+        }
+        return Built(outer, bar, buttons, firstButton, intro, stop)
     }
 
     /** Si el mensaje llegó tarde (la TV estaba apagada), lo aclara. */

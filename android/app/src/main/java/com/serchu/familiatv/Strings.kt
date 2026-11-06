@@ -181,6 +181,8 @@ object Strings {
         "Gota" to mapOf("en" to "Drop", "pt" to "Gota"),
         "Silbido de tubería" to mapOf("en" to "Pipe whistle", "pt" to "Assobio de cano"),
         "Silencio" to mapOf("en" to "Silence", "pt" to "Silêncio"),
+        "Espera tu respuesta" to mapOf("en" to "Waiting for your reply", "pt" to "Aguardando sua resposta"),
+        "Elegí con ← → y confirmá con OK" to mapOf("en" to "Choose with ← → and confirm with OK", "pt" to "Escolha com ← → e confirme com OK"),
         "La tele vuelve a las %s" to mapOf("en" to "The TV comes back at %s", "pt" to "A TV volta às %s"),
         "Descanso de %s h" to mapOf("en" to "Rest for %s h", "pt" to "Descanso de %s h"),
         "Descanso de %s min" to mapOf("en" to "Rest for %s min", "pt" to "Descanso de %s min"),
