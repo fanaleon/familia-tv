@@ -119,6 +119,9 @@ function createPay(opts = {}) {
   const graceMs = 2 * 60 * 1000;       // se sigue mirando un rato más por si pagaron justo al final
   const lateMs = 24 * 60 * 60 * 1000;  // y después, con menos frecuencia, hasta un día (por si la red falló)
   const lateEveryMs = 60 * 1000;
+  // Algunas billeteras mandan el pago sin la "referencia" del QR. Entonces se reconoce por el monto exacto
+  // (y que haya llegado después de pedir el QR). Se apaga con PAY_MATCH_BY_AMOUNT=0.
+  const matchByAmount = String(env.PAY_MATCH_BY_AMOUNT || '1') !== '0';
   const remindDays = Number(env.REMIND_DAYS) >= 0 ? Number(env.REMIND_DAYS) : 3; // aviso antes de que venza
   const dataDir = path.resolve(env.DATA_DIR || path.join(__dirname, 'data'));
   const stateFile = path.join(dataDir, 'licencia.json');
@@ -252,6 +255,10 @@ function createPay(opts = {}) {
     if (product === undefined || product === null) product = 'plan';
     if (product !== 'plan' && product !== 'extra') throw Object.assign(new Error('producto_invalido'), { code: 400 });
     prunePending();
+    // Si ya hay un QR igual con tiempo de sobra (por ejemplo, se apretó el botón dos veces), se reutiliza
+    for (const q of pending.values()) {
+      if (q.estado === 'esperando' && q.method === method && q.product === product && q.expiresAt - now() > 3 * 60 * 1000) return view(q);
+    }
     const price = product === 'extra' ? priceExtraUsd : priceUsd;
 
     const ref = newReference();
@@ -410,6 +417,44 @@ function createPay(opts = {}) {
     return false;
   }
 
+  // ----- movimientos de la billetera de cobro (diagnóstico y pagos sin referencia) -----
+  const scanned = new Set();
+  let lastScan = 0;
+  let lastBeat = 0;
+
+  function describeTx(tx) {
+    const keys = (tx.transaction.message.accountKeys || []).map((k) => (typeof k === 'string' ? k : k.pubkey));
+    const i = keys.indexOf(wallet);
+    const sol = i >= 0 ? BigInt(tx.meta.postBalances[i]) - BigInt(tx.meta.preBalances[i]) : 0n;
+    const tokSum = (list) => (list || []).filter((b) => b.owner === wallet && b.mint === usdcMint).reduce((a, b) => a + BigInt(b.uiTokenAmount.amount), 0n);
+    const usdc = tokSum(tx.meta.postTokenBalances) - tokSum(tx.meta.preTokenBalances);
+    return { keys, sol, usdc };
+  }
+
+  async function scanWallet(waiting) {
+    const t = now();
+    if (t - lastScan < 20000) return;
+    lastScan = t;
+    const sigs = await rpc('getSignaturesForAddress', [wallet, { limit: 10, commitment }]);
+    for (const s of sigs || []) {
+      if (s.err || used().has(s.signature) || scanned.has(s.signature)) continue;
+      const tx = await rpc('getTransaction', [s.signature, { encoding: 'jsonParsed', commitment, maxSupportedTransactionVersion: 0 }]);
+      if (!tx || !tx.meta || tx.meta.err) continue;
+      scanned.add(s.signature);
+      const d = describeTx(tx);
+      const withRef = waiting.find((p) => d.keys.includes(p.ref));
+      const at = (tx.blockTime || 0) * 1000;
+      console.log(`[pago] movimiento en la billetera ${s.signature.slice(0, 10)}…: ${d.sol > 0n ? '+' + Number(d.sol) / 1e9 + ' SOL' : ''}${d.usdc > 0n ? ' +' + Number(d.usdc) / 1e6 + ' USDC' : ''} ${withRef ? '(con referencia de un pedido)' : '(sin referencia)'}`);
+      if (withRef || !matchByAmount) continue;
+      const cand = waiting.find((p) => p.estado === 'esperando' && at >= p.createdAt - 60000 &&
+        (p.method === 'sol' ? d.sol === p.expected : d.usdc === p.expected));
+      if (cand) {
+        console.log('[pago] llegó sin referencia pero con el monto exacto de un pedido: se acepta');
+        accept(cand, s.signature);
+      }
+    }
+  }
+
   // Un solo ciclo a la vez. Los pagos recientes se miran cada vez; los que ya vencieron, una vez por minuto.
   async function poll() {
     const t = now();
@@ -431,6 +476,16 @@ function createPay(opts = {}) {
           console.error('[pago] no pude consultar la red:', e.message);
         }
         break; // si la red no responde, no se insiste con el resto: se reintenta después
+      }
+    }
+    if (!failed) {
+      const fresh = waiting.filter((p) => p.estado === 'esperando' && now() <= p.expiresAt + graceMs);
+      if (fresh.length) {
+        try { await scanWallet(fresh); } catch (e) { failed = true; }
+        if (now() - lastBeat > 60000) {
+          lastBeat = now();
+          console.log(`[pago] vigilando ${fresh.length} pedido(s) en ${rpcUrls[rpcIdx]}`);
+        }
       }
     }
     failStreak = failed ? failStreak + 1 : 0;
