@@ -106,7 +106,7 @@ class FreezeController(private val ctx: Context) {
         ticks = 0
         if (view == null) show(by)
         subtitleView?.text = label
-        footerView?.text = if (by.isNotBlank()) "Bloqueado por $by" else ""
+        footerView?.text = if (by.isNotBlank()) T("Bloqueado por %s", by) else ""
         mute()
         pauseMedia()
         main.removeCallbacks(tick)
@@ -232,7 +232,7 @@ class FreezeController(private val ctx: Context) {
 
         column.addView(
             TextView(ctx).apply {
-                text = "Hora de descansar"
+                text = T("Hora de descansar")
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, sz(42f))
                 setTextColor(Pal.text)
                 typeface = Typeface.DEFAULT_BOLD

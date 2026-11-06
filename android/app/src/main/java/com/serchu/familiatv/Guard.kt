@@ -363,10 +363,10 @@ class GuardView(context: Context) : View(context) {
         txt.color = Pal.text
         txt.alpha = 255
         txt.textSize = 17f * u
-        c.drawText("SHHH…", x + 44f * u, y + 22f * u, txt)
+        c.drawText(T("SHHH…"), x + 44f * u, y + 22f * u, txt)
         txt.color = Pal.muted
         txt.textSize = 9.5f * u
-        c.drawText("NO MOLESTAR", x + 44f * u, y + 38f * u, txt)
+        c.drawText(T("NO MOLESTAR"), x + 44f * u, y + 38f * u, txt)
     }
 
     private fun drawRipples(c: Canvas) {
