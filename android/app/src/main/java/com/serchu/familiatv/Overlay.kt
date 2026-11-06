@@ -369,7 +369,7 @@ class OverlayPresenter(
         // Velo oscuro + luz de color detrás de la tarjeta (más oscuro si pide respuesta)
         val aura = AuraScrim(ctx, accent, if (m.needsReply) 0x80000000.toInt() else 0x59000000).apply { alpha = 0f }
 
-        val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
+        val outer = KeyFrame(ctx, onBack = { answer("sin_respuesta", null) }).apply {
             setPadding(ctx.dp(48), ctx.dp(40), ctx.dp(48), ctx.dp(40))
             clipChildren = false
             clipToPadding = false
