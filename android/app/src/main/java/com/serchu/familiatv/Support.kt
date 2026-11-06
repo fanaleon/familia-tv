@@ -85,7 +85,7 @@ object Profile {
         return fresh
     }
 
-    /** Marca un aviso del sistema como mostrado. Devuelve false si ya se había mostrado (el servidor puede reenviarlos). */
+    /** (reemplazado por [Inbox]) Marca un aviso del sistema como mostrado. Devuelve false si ya se había mostrado (el servidor puede reenviarlos). */
     fun markAviso(ctx: Context, aid: String): Boolean {
         val p = prefs(ctx)
         val seen = (p.getString("avisos_vistos", "") ?: "").split(',').filter { it.isNotBlank() }
@@ -315,3 +315,60 @@ fun Context.avatarRing(name: String, base64: String?, sizeDp: Int, ring: Int): V
 /** Color de texto que se lee bien sobre [background]: oscuro si el fondo es claro (amarillo, verde). */
 fun onColor(background: Int): Int =
     if (ColorUtils.calculateLuminance(background) > 0.45) 0xFF111111.toInt() else Color.WHITE
+
+
+/**
+ * Bandeja de notificaciones del móvil: pagos recibidos, avisos de vencimiento y respuestas.
+ * Se guarda en el teléfono (últimas 50) y se completa con el historial que manda el servidor.
+ */
+object Inbox {
+    class Item(val aid: String, val title: String, val text: String, val ts: Long, val notified: Boolean)
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("inbox", Context.MODE_PRIVATE)
+
+    @Synchronized
+    fun items(ctx: Context): List<Item> {
+        val raw = prefs(ctx).getString("items", "[]") ?: "[]"
+        val arr = runCatching { org.json.JSONArray(raw) }.getOrDefault(org.json.JSONArray())
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            Item(o.optString("aid"), o.optString("title"), o.optString("text"), o.optLong("ts"), o.optBoolean("n"))
+        }
+    }
+
+    private fun save(ctx: Context, list: List<Item>) {
+        val arr = org.json.JSONArray()
+        list.sortedBy { it.ts }.takeLast(50).forEach {
+            arr.put(org.json.JSONObject().put("aid", it.aid).put("title", it.title).put("text", it.text).put("ts", it.ts).put("n", it.notified))
+        }
+        prefs(ctx).edit().putString("items", arr.toString()).apply()
+    }
+
+    /** Suma un aviso si no estaba. Devuelve true si era nuevo. */
+    @Synchronized
+    fun add(ctx: Context, aid: String, title: String, text: String, ts: Long, notified: Boolean = false): Boolean {
+        val list = items(ctx)
+        if (list.any { it.aid == aid }) return false
+        save(ctx, list + Item(aid, title, text, if (ts > 0) ts else System.currentTimeMillis(), notified))
+        return true
+    }
+
+    /** Marca que ya se mostró como notificación del sistema. Devuelve true si todavía no se había mostrado. */
+    @Synchronized
+    fun markNotified(ctx: Context, aid: String): Boolean {
+        val list = items(ctx)
+        val cur = list.firstOrNull { it.aid == aid } ?: return true
+        if (cur.notified) return false
+        save(ctx, list.map { if (it.aid == aid) Item(it.aid, it.title, it.text, it.ts, true) else it })
+        return true
+    }
+
+    fun unread(ctx: Context): Int {
+        val seen = prefs(ctx).getLong("read_ts", 0L)
+        return items(ctx).count { it.ts > seen }
+    }
+
+    fun markAllRead(ctx: Context) {
+        prefs(ctx).edit().putLong("read_ts", System.currentTimeMillis() + 1000).apply()
+    }
+}

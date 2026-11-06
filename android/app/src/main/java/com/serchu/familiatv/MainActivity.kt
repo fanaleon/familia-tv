@@ -120,6 +120,8 @@ class MainActivity : Activity() {
     private class TvInfo(val id: String, val name: String, val online: Boolean, val pending: Int, val freeze: JSONObject?)
     private var tvList: List<TvInfo> = emptyList()
     private var tvTarget: String? = null
+    private lateinit var bellBtn: TextView
+    private lateinit var planLine: TextView
     private lateinit var tvPicker: HorizontalScrollView
     private lateinit var tvPickerRow: LinearLayout
     private var sessionPin: String? = null // el PIN de padres, solo mientras la app está abierta
@@ -334,7 +336,19 @@ class MainActivity : Activity() {
         titles.addView(label("Familia TV", 26f, Pal.text, bold = true), lp(wrap, wrap))
         titles.addView(label("Mensajes para la tele de casa", 13f, Pal.muted), lp(wrap, wrap))
         header.addView(titles, LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = dp(14) })
+        // Campana: bandeja de notificaciones (pagos recibidos, avisos de vencimiento, respuestas)
+        bellBtn = label("🔔", 18f, Pal.text).apply {
+            gravity = Gravity.CENTER
+            minimumWidth = dp(46)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = withRipple(roundedBg(0x1FFFFFFF, dp(24), 0x2AFFFFFF, dp(1)))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showInbox() }
+        }
+        header.addView(bellBtn, LinearLayout.LayoutParams(wrap, wrap))
         root.addView(header, lp(match, wrap))
+        refreshBell()
 
         statusPill = label("●  Comprobando…", 13f, Pal.muted).apply {
             setPadding(dp(14), dp(7), dp(14), dp(7))
@@ -342,6 +356,11 @@ class MainActivity : Activity() {
             background = roundedBg(0x1FFFFFFF, dp(20), 0x2AFFFFFF, dp(1))
         }
         root.addView(statusPill, lp(wrap, wrap, top = 16))
+        planLine = label("", 13f, Pal.muted).apply {
+            visibility = View.GONE
+            setPadding(dp(4), dp(0), dp(4), dp(0))
+        }
+        root.addView(planLine, lp(wrap, wrap, top = 8))
 
         // Destino: solo aparece cuando hay 2 o más TV vinculadas
         tvTarget = Profile.tvTarget(this)
@@ -855,6 +874,14 @@ class MainActivity : Activity() {
                 val o = runCatching { JSONObject(raw) }.getOrNull()
                 runOnUiThread {
                     if (okHttp && o != null) {
+                        o.optJSONObject("plan")?.let { renderPlanLine(it) }
+                        o.optJSONArray("avisos")?.let { av ->
+                            for (i in 0 until av.length()) {
+                                val a = av.optJSONObject(i) ?: continue
+                                Inbox.add(this, a.optString("aid"), a.optString("title"), a.optString("text"), a.optLong("ts"))
+                            }
+                            refreshBell()
+                        }
                         val arr = o.optJSONArray("tvs")
                         if (arr != null) {
                             tvList = (0 until arr.length()).mapNotNull { i ->
@@ -872,6 +899,63 @@ class MainActivity : Activity() {
                 }
             }
         })
+    }
+
+    // ---- notificaciones y plan ----
+
+    private fun refreshBell() {
+        val n = Inbox.unread(this)
+        bellBtn.text = if (n > 0) "🔔 $n" else "🔔"
+        bellBtn.setTextColor(if (n > 0) accentColor() else Pal.text)
+    }
+
+    private fun renderPlanLine(plan: JSONObject) {
+        val fmt = SimpleDateFormat("d 'de' MMMM", Locale("es"))
+        val hasta = plan.optLong("hasta", 0L)
+        val fecha = if (hasta > 0) fmt.format(Date(hasta)) else ""
+        val cap = plan.optInt("capacidad", 0)
+        val tvs = if (cap > 0) " · ${plan.optInt("tvs_usadas")}/$cap TV" else ""
+        val t = when (plan.optString("estado")) {
+            "activo" -> "💳  Plan activo hasta el $fecha$tvs"
+            "prueba" -> "💳  Prueba hasta el $fecha$tvs"
+            "vencido" -> "💳  Plan vencido: se renueva desde «Plan» en la tele"
+            else -> ""
+        }
+        planLine.text = t
+        planLine.visibility = if (t.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun showInbox() {
+        val items = Inbox.items(this).sortedByDescending { it.ts }
+        Inbox.markAllRead(this)
+        refreshBell()
+        val fmt = SimpleDateFormat("d MMM, HH:mm", Locale("es"))
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        if (items.isEmpty()) {
+            list.addView(
+                label("Todavía no hay notificaciones. Acá vas a ver los pagos recibidos, los avisos de vencimiento del plan y las respuestas a tus mensajes.", 14f, Pal.muted),
+                lp(match, wrap)
+            )
+        }
+        items.forEach { it ->
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = roundedBg(Pal.card, dp(14), 0x2AFFFFFF, dp(1))
+            }
+            card.addView(label(it.title, 15f, Pal.text, bold = true), lp(match, wrap))
+            card.addView(label(it.text, 14f, Pal.text), lp(match, wrap, top = 4))
+            card.addView(label(fmt.format(Date(it.ts)), 12f, Pal.muted), lp(match, wrap, top = 6))
+            list.addView(card, lp(match, wrap, top = 10))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Notificaciones")
+            .setView(ScrollView(this).apply { addView(list) })
+            .setPositiveButton("Cerrar", null)
+            .show()
     }
 
     // ---- varias TV ----

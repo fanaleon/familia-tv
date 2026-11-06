@@ -54,8 +54,10 @@ class PhoneService : Service() {
         val aid = o.optString("aid")
         if (aid.isBlank()) return
         link.send(JSONObject().put("type", "ack").put("id", aid))
-        if (!Profile.markAviso(this, aid)) return
-        Notifs.post(this, aid.hashCode(), o.optString("title", "Familia TV"), o.optString("text"))
+        val title = o.optString("title", "Familia TV")
+        val text = o.optString("text")
+        Inbox.add(this, aid, title, text, o.optLong("ts"))          // queda en la bandeja de la app
+        if (Inbox.markNotified(this, aid)) Notifs.post(this, aid.hashCode(), title, text)
     }
 
     private fun handle(o: JSONObject) {
@@ -86,6 +88,7 @@ class PhoneService : Service() {
             "sin_respuesta" -> "Nadie respondió" to quoted
             else -> return
         }
+        Inbox.add(this, "reply-$rid", title, text, System.currentTimeMillis(), notified = true)
         Notifs.post(this, rid.hashCode(), title, text)
     }
 
