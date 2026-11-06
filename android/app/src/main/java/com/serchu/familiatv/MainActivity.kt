@@ -36,6 +36,12 @@ import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.animation.LinearInterpolator
+import android.view.ViewOutlineProvider
+import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
+import android.animation.AnimatorListenerAdapter
+import android.animation.Animator
 import android.view.ViewGroup
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.EditText
@@ -551,6 +557,14 @@ class MainActivity : Activity() {
         }
         root.addView(sendBtn, lp(match, dp(60), top = 20))
 
+        // Aviso urgente: pantalla roja en la tele. Hay que mantenerlo apretado para que no salga sin querer.
+        root.addView(buildUrgentButton(), lp(match, dp(58), top = 12))
+        root.addView(
+            label(T("Avisa a toda la tele con pantalla roja y sonido. Sin texto, manda «Necesito que vengas ya». Una vez por minuto."), 12f, Pal.muted)
+                .apply { gravity = Gravity.CENTER },
+            lp(match, wrap, top = 6)
+        )
+
         feedback = label("", 14f, Pal.muted).apply {
             gravity = Gravity.CENTER
             alpha = 0f
@@ -583,6 +597,67 @@ class MainActivity : Activity() {
             background = appBackground()
             addView(root)
         }
+    }
+
+    /** Botón de aviso urgente: se llena mientras lo mantenés apretado y a los 1,5 s manda el aviso. */
+    private fun buildUrgentButton(): View {
+        val red = 0xFFE23B4B.toInt()
+        val fill = View(this).apply {
+            setBackgroundColor(red)
+            pivotX = 0f
+            scaleX = 0f
+        }
+        val title = label(T("⚡  Urgente: mantené apretado"), 18f, Color.WHITE, bold = true).apply { gravity = Gravity.CENTER }
+        val box = FrameLayout(this).apply {
+            background = roundedBg(0x33E23B4B, dp(20), red, dp(2))
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            isClickable = true
+            contentDescription = T("⚡  Urgente: mantené apretado")
+        }
+        val full = ViewGroup.LayoutParams.MATCH_PARENT
+        box.addView(fill, FrameLayout.LayoutParams(full, full))
+        box.addView(title, FrameLayout.LayoutParams(full, full))
+
+        var holding: ObjectAnimator? = null
+        fun release() {
+            holding?.cancel()
+            holding = null
+            fill.animate().cancel()
+            fill.animate().scaleX(0f).setDuration(180).start()
+        }
+        box.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (!sending) {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        fill.animate().cancel()
+                        holding = ObjectAnimator.ofFloat(fill, View.SCALE_X, 0f, 1f).apply {
+                            duration = 1500
+                            interpolator = LinearInterpolator()
+                            addListener(object : AnimatorListenerAdapter() {
+                                private var cancelled = false
+                                override fun onAnimationCancel(animation: Animator) { cancelled = true }
+                                override fun onAnimationEnd(animation: Animator) {
+                                    if (cancelled) return
+                                    v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    send(urgent = true)
+                                    release()
+                                }
+                            })
+                            start()
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    release()
+                    true
+                }
+                else -> true
+            }
+        }
+        return box
     }
 
     /**
@@ -858,8 +933,8 @@ class MainActivity : Activity() {
             .url(Cfg.httpBase + path)
             .header("Authorization", "Bearer " + Cfg.token)
 
-    private fun send() {
-        val text = input.text.toString().trim()
+    private fun send(urgent: Boolean = false) {
+        val text = input.text.toString().trim().ifEmpty { if (urgent) T("Necesito que vengas ya") else "" }
         if (text.isEmpty() || sending) return
         if (!Cfg.configured) {
             showFeedback(T("Falta configurar RELAY_URL y RELAY_TOKEN."), Pal.bad)
@@ -870,7 +945,7 @@ class MainActivity : Activity() {
         sendBtn.text = T("Enviando…")
         updateSendState()
 
-        val askedReply = wantReply
+        val askedReply = wantReply || urgent
         val json = JSONObject()
             .put("uid", Profile.uid(this))
             .put("from", Profile.name(this))
@@ -878,6 +953,7 @@ class MainActivity : Activity() {
             .put("duration", if (longDuration) "larga" else "normal")
             .put("color", Profile.color(this))
             .put("reply", askedReply)
+        if (urgent) json.put("urgent", true)
         target()?.let { json.put("tv", it) }
         Profile.avatar(this)?.let { json.put("avatar", it) }
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -896,7 +972,8 @@ class MainActivity : Activity() {
                 val entregadas = o?.optInt("entregadas", if (delivered) 1 else 0) ?: 0
                 runOnUiThread {
                     when {
-                        code in 200..299 -> sendDone(true, delivered, askedReply, null, total, entregadas)
+                        code in 200..299 -> sendDone(true, delivered, askedReply, null, total, entregadas, urgent)
+                        code == 429 -> sendDone(false, false, askedReply, T("Esperá %s s para mandar otro aviso urgente.", o?.optInt("espera_s", 60) ?: 60))
                         code == 409 -> sendDone(false, false, askedReply, T("Todavía no hay ninguna TV vinculada. Abrí Hey Family en la tele."))
                         code == 404 -> {
                             sendDone(false, false, askedReply, T("Esa TV ya no está vinculada."))
@@ -911,13 +988,14 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?, total: Int = 1, entregadas: Int = 0) {
+    private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?, total: Int = 1, entregadas: Int = 0, urgent: Boolean = false) {
         sending = false
         if (ok) {
             input.setText("")
             wantReply = false // para no tomar el control de la tele sin querer en el próximo mensaje
             renderOptions()
             when {
+                urgent && total <= 1 && delivered -> showFeedback(T("Urgente enviado. Te aviso cuando lo vean."), Pal.bad)
                 total > 1 && entregadas == total ->
                     showFeedback(T("Enviado a las %s TV.", total) + if (askedReply) " " + T("Te aviso cuando respondan.") else "", Pal.ok)
                 total > 1 && entregadas > 0 ->
@@ -1468,10 +1546,12 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         val test = tvButton(T("Probar mensaje")) { sendTest(RelayService.ACTION_TEST) }
-        val testReply = tvButton(T("Probar con respuesta")) { sendTest(RelayService.ACTION_TEST_REPLY) }
-        val testFreeze = tvButton(T("Probar bloqueo (45 s)")) { sendTest(RelayService.ACTION_TEST_FREEZE) }
+        val testReply = tvButton(T("Con respuesta")) { sendTest(RelayService.ACTION_TEST_REPLY) }
+        val testUrgent = tvButton(T("Urgente")) { sendTest(RelayService.ACTION_TEST_URGENT) }
+        val testFreeze = tvButton(T("Bloqueo (45 s)")) { sendTest(RelayService.ACTION_TEST_FREEZE) }
         tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(14) })
+        tests.addView(testUrgent, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testFreeze, lp(wrap, wrap))
         bottom.addView(tests, lp(wrap, wrap))
         rootFrame.addView(

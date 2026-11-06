@@ -85,6 +85,8 @@ class PhoneService : Service() {
             "ok" -> T("Respondieron: OK") to quoted
             "voy" -> T("Respondieron: Voy") to quoted
             "ahora_no" -> T("Respondieron: Ahora no") to quoted
+            "cinco_min" -> T("Respondieron: 5 minutos") to quoted
+            "visto" -> T("Ya lo vieron en la tele") to quoted
             "sin_respuesta" -> T("Nadie respondió") to quoted
             else -> return
         }
