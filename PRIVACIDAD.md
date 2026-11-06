@@ -7,7 +7,8 @@ Hey Family no tiene cuentas ni pide datos personales. Guarda lo mínimo para lle
 | Dato | Para qué | Dónde queda | Cuánto tiempo |
 | --- | --- | --- | --- |
 | Mensajes (texto, nombre de quien envía, color, foto opcional) | Llevarlos a la TV | Memoria del servidor, solo si la TV está apagada. No se escriben en disco | Máximo 5 minutos; se borran al entregarse |
-| Respuestas de la TV (OK, Voy, Ahora no) y las primeras palabras del mensaje respondido | Avisar al móvil | Memoria del servidor si el móvil está sin conexión; bandeja del móvil | Máximo 5 minutos |
+| Respuestas de la TV (OK, Voy, 5 minutos, Ahora no, «visto» al verlo o cerrar un aviso urgente) y las primeras palabras del mensaje respondido | Avisar al móvil | Memoria del servidor si el móvil está sin conexión; bandeja del móvil | Máximo 5 minutos |
+| Hora del último aviso urgente de cada móvil | Permitir uno por minuto | Memoria del servidor | Hasta que se reinicie el servicio |
 | Identificador del móvil (código aleatorio, no es el número ni el email) | Saber a qué móvil devolver la respuesta | El móvil; memoria del servidor mientras está conectado | Hasta desinstalar la app |
 | Nombre, foto y color del perfil | Mostrarlos junto al mensaje en la TV | El móvil; viajan con cada mensaje | Hasta cambiarlos o desinstalar |
 | TV vinculadas (código aleatorio y nombre) | Recordar qué TV hay y respetar el límite del plan | Disco del servidor y la propia TV | Hasta que se borren |
@@ -24,6 +25,7 @@ Hey Family no tiene cuentas ni pide datos personales. Guarda lo mínimo para lle
 - El mensaje viaja del móvil al servidor y de ahí a la TV por una conexión cifrada (HTTPS); la app no admite tráfico sin cifrar.
 - Si la TV está encendida, el servidor lo reenvía y lo saca de su cola cuando la TV confirma que lo recibió.
 - Si la TV está apagada, queda en la memoria del servidor hasta 5 minutos y después se descarta. Nunca se escribe en disco, y la cola se limpia sola cada 30 segundos. El tiempo se puede cambiar con la variable `MSG_TTL_MIN` (5 por defecto).
+- Un aviso urgente es un mensaje más: texto fijo («Llamame Urgente»), mismo límite de 5 minutos y la misma conexión cifrada.
 - Las respuestas de la TV siguen la misma regla: 5 minutos en el servidor, y en el móvil desaparecen de la bandeja y la notificación se retira sola a los 5 minutos.
 - En la TV, el «último mensaje» de la pantalla principal se borra a los 5 minutos y solo vive en memoria.
 - Los registros del servidor anotan quién envía, cuántos caracteres tiene el mensaje y a qué TV va; no guardan el texto.
