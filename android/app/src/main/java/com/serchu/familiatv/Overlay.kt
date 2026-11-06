@@ -335,18 +335,19 @@ class OverlayPresenter(
             }
         }
 
-        // Resplandor del color en la esquina de arriba
+        // Resplandor del color en la esquina de arriba. Tiene que medir menos que el contenido:
+        // si no, la tarjeta se estira para acomodarlo y queda mucho más alta que el mensaje.
         val glow = View(ctx).apply {
             background = GradientDrawable().apply {
                 setGradientType(GradientDrawable.RADIAL_GRADIENT)
-                setGradientRadius(ctx.dp(210).toFloat())
+                setGradientRadius(ctx.dp(150).toFloat())
                 setColors(intArrayOf(withAlpha(accent, 0x66), withAlpha(accent, 0x00)))
                 setGradientCenter(0.5f, 0.5f)
             }
         }
         cardFrame.addView(
             glow,
-            FrameLayout.LayoutParams(ctx.dp(420), ctx.dp(420)).apply { setMargins(-ctx.dp(150), -ctx.dp(190), 0, 0) }
+            FrameLayout.LayoutParams(ctx.dp(300), ctx.dp(300)).apply { setMargins(-ctx.dp(110), -ctx.dp(150), 0, 0) }
         )
 
         val content = LinearLayout(ctx).apply {
@@ -497,7 +498,7 @@ class OverlayPresenter(
         content.addView(
             track,
             LinearLayout.LayoutParams(match, ctx.dp(6)).apply {
-                setMargins(-ctx.dp(30), ctx.dp(22), -ctx.dp(30), -ctx.dp(24))
+                setMargins(-ctx.dp(30), ctx.dp(20), -ctx.dp(30), -ctx.dp(12))
             }
         )
         cardFrame.addView(content, FrameLayout.LayoutParams(match, wrap))
