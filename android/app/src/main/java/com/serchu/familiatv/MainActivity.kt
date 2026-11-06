@@ -878,7 +878,7 @@ class MainActivity : Activity() {
                         o.optJSONArray("avisos")?.let { av ->
                             for (i in 0 until av.length()) {
                                 val a = av.optJSONObject(i) ?: continue
-                                Inbox.add(this, a.optString("aid"), a.optString("title"), a.optString("text"), a.optLong("ts"))
+                                Inbox.add(this@MainActivity, a.optString("aid"), a.optString("title"), a.optString("text"), a.optLong("ts"))
                             }
                             refreshBell()
                         }
