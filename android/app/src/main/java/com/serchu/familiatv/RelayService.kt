@@ -46,12 +46,12 @@ class RelayService : Service() {
             "role=tv&id=" + Profile.tvId(applicationContext),
             onStateChange = { ok ->
                 RelayState.connected = ok
-                updateNotification(if (ok) "Conectada — esperando mensajes" else "Reconectando…")
+                updateNotification(if (ok) T("Conectada — esperando mensajes") else T("Reconectando…"))
             },
             onJson = { o -> handle(o) }
         )
         Notifs.ensureChannels(this)
-        goForeground(if (Cfg.configured) "Conectando…" else "App sin configurar")
+        goForeground(if (Cfg.configured) T("Conectando…") else T("App sin configurar"))
         acquireWakeLock()
         freeze.restore() // si había un bloqueo en curso (reinicio de la app), lo retoma
         if (Cfg.configured) link.start()
@@ -62,7 +62,7 @@ class RelayService : Service() {
             ACTION_TEST -> showTest(false)
             ACTION_TEST_REPLY -> showTest(true)
             // La prueba nunca pisa un bloqueo real: si ya hay uno en curso, no hace nada
-            ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(45_000L, "Prueba de bloqueo", Cfg.senderName) }
+            ACTION_TEST_FREEZE -> main.post { if (!freeze.running) freeze.start(45_000L, T("Prueba de bloqueo"), Cfg.senderName) }
         }
         return START_STICKY
     }
@@ -83,7 +83,7 @@ class RelayService : Service() {
         when (o.optString("type")) {
             "freeze" -> {
                 val endsIn = o.optLong("endsIn")
-                val label = o.optString("label")
+                val label = Lang.freezeLabel(o.optString("label"), o.optJSONObject("lk"))
                 val by = o.optString("by")
                 main.post { freeze.start(endsIn, label, by) }
                 return
@@ -106,7 +106,7 @@ class RelayService : Service() {
             else -> return
         }
         val id = o.optString("id")
-        val body = o.optString("text")
+        val body = Lang.pick(o, "texto", "i18n", o.optString("text"))
         if (id.isBlank() || body.isBlank()) return
 
         // Confirmamos recepción para que el relay no lo reenvíe
@@ -156,9 +156,9 @@ class RelayService : Service() {
             uid = "",
             from = Cfg.senderName,
             text = if (withReply) {
-                "¿Vienen a cenar? Probá los botones con el control."
+                T("¿Vienen a cenar? Probá los botones con el control.")
             } else {
-                "Así se van a ver los mensajes. Todo funciona."
+                T("Así se van a ver los mensajes. Todo funciona.")
             },
             ts = System.currentTimeMillis(),
             needsReply = withReply,

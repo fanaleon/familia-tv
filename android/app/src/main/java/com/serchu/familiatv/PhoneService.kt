@@ -30,12 +30,12 @@ class PhoneService : Service() {
     override fun onCreate() {
         super.onCreate()
         Notifs.ensureChannels(this)
-        goForeground(if (Cfg.configured) "Conectando…" else "App sin configurar")
+        goForeground(if (Cfg.configured) T("Conectando…") else T("App sin configurar"))
         link = RelayLink(
             applicationContext,
             "role=phone&uid=" + Profile.uid(applicationContext),
             onStateChange = { ok ->
-                updateNotification(if (ok) "Conectado — avisa cuando contesten" else "Reconectando…")
+                updateNotification(if (ok) T("Conectado — avisa cuando contesten") else T("Reconectando…"))
             },
             onJson = { o -> handle(o) }
         )
@@ -54,8 +54,8 @@ class PhoneService : Service() {
         val aid = o.optString("aid")
         if (aid.isBlank()) return
         link.send(JSONObject().put("type", "ack").put("id", aid))
-        val title = o.optString("title", "Familia TV")
-        val text = o.optString("text")
+        val title = Lang.pick(o, "titulo", "i18n", o.optString("title", "Familia TV"))
+        val text = Lang.pick(o, "texto", "i18n", o.optString("text"))
         Inbox.add(this, aid, title, text, o.optLong("ts"))          // queda en la bandeja de la app
         if (Inbox.markNotified(this, aid)) Notifs.post(this, aid.hashCode(), title, text)
     }
@@ -80,12 +80,12 @@ class PhoneService : Service() {
         if (!fresh) return
 
         val re = o.optString("re")
-        val quoted = if (re.isNotBlank()) "A tu mensaje: «$re»" else "Respuesta a tu mensaje"
+        val quoted = if (re.isNotBlank()) T("A tu mensaje: «%s»", re) else T("Respuesta a tu mensaje")
         val (title, text) = when (o.optString("choice")) {
-            "ok" -> "Respondieron: OK" to quoted
-            "voy" -> "Respondieron: Voy" to quoted
-            "ahora_no" -> "Respondieron: Ahora no" to quoted
-            "sin_respuesta" -> "Nadie respondió" to quoted
+            "ok" -> T("Respondieron: OK") to quoted
+            "voy" -> T("Respondieron: Voy") to quoted
+            "ahora_no" -> T("Respondieron: Ahora no") to quoted
+            "sin_respuesta" -> T("Nadie respondió") to quoted
             else -> return
         }
         Inbox.add(this, "reply-$rid", title, text, System.currentTimeMillis(), notified = true)

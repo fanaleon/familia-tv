@@ -141,7 +141,7 @@ function createPay(opts = {}) {
         licenseUntil: Number(raw.licenseUntil) || 0,
         packs: Number.isInteger(raw.packs) && raw.packs > 0 ? raw.packs : 0,
         remindedFor: Number(raw.remindedFor) || 0,
-        lastReceipt: raw.lastReceipt && typeof raw.lastReceipt.texto === 'string' ? { at: Number(raw.lastReceipt.at) || 0, texto: raw.lastReceipt.texto } : null,
+        lastReceipt: raw.lastReceipt && typeof raw.lastReceipt.texto === 'string' ? { at: Number(raw.lastReceipt.at) || 0, texto: raw.lastReceipt.texto, textos: raw.lastReceipt.textos || null } : null,
         paid: Array.isArray(raw.paid) ? raw.paid.slice(-200) : [],
       };
     }
@@ -359,28 +359,78 @@ function createPay(opts = {}) {
 
   const used = () => new Set(state.paid.map((x) => x.sig));
 
-  const fmtDate = (ms) => {
+  const LANGS = ['es', 'en', 'pt'];
+  const LOCALE = { es: 'es-AR', en: 'en-US', pt: 'pt-BR' };
+  const fmtDate = (ms, lang = 'es') => {
     try {
-      return new Date(ms).toLocaleDateString('es-AR', { day: 'numeric', month: 'long', timeZone: 'America/Argentina/Buenos_Aires' });
+      return new Date(ms).toLocaleDateString(LOCALE[lang] || 'es-AR', { day: 'numeric', month: 'long', timeZone: 'America/Argentina/Buenos_Aires' });
     } catch (e) {
       return new Date(ms).toISOString().slice(0, 10);
     }
   };
 
-  // Texto de confirmación: lo que pagó, qué compró, cuándo vence y cuándo se le avisa
+  // Textos del recibo y del aviso en cada idioma: la tele y el móvil eligen el suyo.
+  const T = {
+    es: {
+      title: '✅ Pago recibido',
+      paid: (a, sym, what, usd) => `Pagaste ${a} ${sym} (${what}, ${usd} USD).`,
+      whatExtra: (n) => `${n} TV más`,
+      whatPlan: 'plan',
+      extra: (cap) => `Ya podés vincular hasta ${cap} TV.`,
+      plan: (cap, days) => `Plan Familia TV: hasta ${cap} TV, ${days} días.`,
+      expires: (d) => `Vence el ${d}.`,
+      remind: (n, d) => `Te aviso ${n} días antes (el ${d}).`,
+      trial: (d) => `Seguís en la prueba, que termina el ${d}: activá el plan antes.`,
+      remTitle: '⏰ Tu plan de Familia TV está por vencer',
+      remText: (d, n) => `Vence el ${d} (en ${n} ${n === 1 ? 'día' : 'días'}). Para renovarlo, abrí «Plan» en la tele y pagá desde el QR.`,
+    },
+    en: {
+      title: '✅ Payment received',
+      paid: (a, sym, what, usd) => `You paid ${a} ${sym} (${what}, ${usd} USD).`,
+      whatExtra: (n) => `${n} more TVs`,
+      whatPlan: 'plan',
+      extra: (cap) => `You can now link up to ${cap} TVs.`,
+      plan: (cap, days) => `Familia TV plan: up to ${cap} TVs, ${days} days.`,
+      expires: (d) => `Expires on ${d}.`,
+      remind: (n, d) => `I'll remind you ${n} days before (on ${d}).`,
+      trial: (d) => `You're still on the trial, which ends on ${d}: activate the plan before then.`,
+      remTitle: '⏰ Your Familia TV plan is about to expire',
+      remText: (d, n) => `It expires on ${d} (in ${n} ${n === 1 ? 'day' : 'days'}). To renew it, open "Plan" on the TV and pay with the QR.`,
+    },
+    pt: {
+      title: '✅ Pagamento recebido',
+      paid: (a, sym, what, usd) => `Você pagou ${a} ${sym} (${what}, ${usd} USD).`,
+      whatExtra: (n) => `mais ${n} TVs`,
+      whatPlan: 'plano',
+      extra: (cap) => `Agora você pode vincular até ${cap} TVs.`,
+      plan: (cap, days) => `Plano Familia TV: até ${cap} TVs, ${days} dias.`,
+      expires: (d) => `Vence em ${d}.`,
+      remind: (n, d) => `Aviso você ${n} dias antes (em ${d}).`,
+      trial: (d) => `Você continua no teste, que termina em ${d}: ative o plano antes.`,
+      remTitle: '⏰ Seu plano do Familia TV está para vencer',
+      remText: (d, n) => `Vence em ${d} (em ${n} ${n === 1 ? 'dia' : 'dias'}). Para renovar, abra «Plano» na TV e pague pelo QR.`,
+    },
+  };
+
+  // Texto de confirmación: lo que pagó, qué compró, cuándo vence y cuándo se le avisa (en los 3 idiomas)
   function buildReceipt(p) {
     const usd = p.product === 'extra' ? priceExtraUsd : priceUsd;
-    const lines = [`Pagaste ${p.amount} ${p.symbol} (${p.product === 'extra' ? `${tvPack} TV más` : 'plan'}, ${usd} USD).`];
     const pl = plan();
-    if (p.product === 'extra') lines.push(`Ya podés vincular hasta ${capacity()} TV.`);
-    else lines.push(`Plan Familia TV: hasta ${capacity()} TV, ${licenseDays} días.`);
-    if (pl.estado === 'activo') {
-      lines.push(`Vence el ${fmtDate(pl.hasta)}.`);
-      if (remindDays > 0) lines.push(`Te aviso ${remindDays} días antes (el ${fmtDate(pl.hasta - remindDays * DAY)}).`);
-    } else if (pl.estado === 'prueba') {
-      lines.push(`Seguís en la prueba, que termina el ${fmtDate(pl.hasta)}: activá el plan antes.`);
+    const textos = {};
+    for (const l of LANGS) {
+      const x = T[l];
+      const lines = [x.paid(p.amount, p.symbol, p.product === 'extra' ? x.whatExtra(tvPack) : x.whatPlan, usd)];
+      if (p.product === 'extra') lines.push(x.extra(capacity()));
+      else lines.push(x.plan(capacity(), licenseDays));
+      if (pl.estado === 'activo') {
+        lines.push(x.expires(fmtDate(pl.hasta, l)));
+        if (remindDays > 0) lines.push(x.remind(remindDays, fmtDate(pl.hasta - remindDays * DAY, l)));
+      } else if (pl.estado === 'prueba') {
+        lines.push(x.trial(fmtDate(pl.hasta, l)));
+      }
+      textos[l] = { titulo: x.title, texto: lines.join('\n') };
     }
-    return { texto: lines.join('\n'), titulo: '✅ Pago recibido', usd, vence: pl.estado === 'activo' ? pl.hasta : null };
+    return { texto: textos.es.texto, titulo: textos.es.titulo, textos, usd, vence: pl.estado === 'activo' ? pl.hasta : null };
   }
 
   // Varios pedidos iguales (mismo producto, medio y monto) son el mismo QR pedido más de una vez: cuando uno se
@@ -416,7 +466,7 @@ function createPay(opts = {}) {
     p.sig = sig;
     p.doneAt = t;
     p.recibo = buildReceipt(p);
-    state.lastReceipt = { at: t, texto: p.recibo.texto };
+    state.lastReceipt = { at: t, texto: p.recibo.texto, textos: p.recibo.textos };
     save();
     savePending();
     resolveAliases();
@@ -550,11 +600,9 @@ function createPay(opts = {}) {
     if (remindDays <= 0 || state.licenseUntil <= t || state.remindedFor === state.licenseUntil) return null;
     if (state.licenseUntil - t > remindDays * DAY) return null;
     const dias = Math.max(1, Math.ceil((state.licenseUntil - t) / DAY));
-    return {
-      until: state.licenseUntil,
-      titulo: '⏰ Tu plan de Familia TV está por vencer',
-      texto: `Vence el ${fmtDate(state.licenseUntil)} (en ${dias} ${dias === 1 ? 'día' : 'días'}). Para renovarlo, abrí «Plan» en la tele y pagá desde el QR.`,
-    };
+    const textos = {};
+    for (const l of LANGS) textos[l] = { titulo: T[l].remTitle, texto: T[l].remText(fmtDate(state.licenseUntil, l), dias) };
+    return { until: state.licenseUntil, titulo: textos.es.titulo, texto: textos.es.texto, textos };
   }
 
   function markReminded(until) {

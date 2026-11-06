@@ -51,10 +51,10 @@ object Notifs {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
-            NotificationChannel(CH_SERVICE, "Conexión con la familia", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CH_SERVICE, T("Conexión con la familia"), NotificationManager.IMPORTANCE_LOW)
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_MSG, "Mensajes", NotificationManager.IMPORTANCE_HIGH)
+            NotificationChannel(CH_MSG, T("Mensajes"), NotificationManager.IMPORTANCE_HIGH)
         )
     }
 
@@ -103,7 +103,7 @@ class OverlayPresenter(
 
     private class Built(val root: View, val bar: View, val buttons: LinearLayout?, val first: View?)
 
-    private val choices = listOf("ok" to "OK", "voy" to "Voy", "ahora_no" to "Ahora no")
+    private val choices get() = listOf("ok" to "OK", "voy" to T("Voy"), "ahora_no" to T("Ahora no"))
 
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val main = Handler(Looper.getMainLooper())
@@ -221,7 +221,7 @@ class OverlayPresenter(
         row.removeAllViews()
         row.addView(
             TextView(ctx).apply {
-                text = "Respuesta enviada: $label"
+                text = T("Respuesta enviada: %s", label)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
                 setTextColor(Pal.ok)
                 typeface = Typeface.DEFAULT_BOLD
@@ -377,9 +377,9 @@ class OverlayPresenter(
         val s = (System.currentTimeMillis() - ts) / 1000
         return when {
             s < 90 -> null
-            s < 3_600 -> "enviado hace ${s / 60} min"
-            s < 86_400 -> "enviado hace ${s / 3_600} h"
-            else -> "enviado hace más de un día"
+            s < 3_600 -> T("enviado hace %s min", s / 60)
+            s < 86_400 -> T("enviado hace %s h", s / 3_600)
+            else -> T("enviado hace más de un día")
         }
     }
 

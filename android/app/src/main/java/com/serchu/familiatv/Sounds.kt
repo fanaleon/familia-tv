@@ -40,7 +40,7 @@ object Sounds {
         return presets.firstOrNull { it.key == saved }?.key ?: "campana"
     }
 
-    fun label(ctx: Context): String = presets.first { it.key == currentKey(ctx) }.label
+    fun label(ctx: Context): String = T(presets.first { it.key == currentKey(ctx) }.label)
 
     /** Pasa al sonido siguiente de la lista (y vuelve al primero) y lo deja guardado. */
     fun next(ctx: Context) {

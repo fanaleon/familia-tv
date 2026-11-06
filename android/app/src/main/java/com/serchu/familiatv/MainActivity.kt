@@ -83,11 +83,11 @@ class MainActivity : Activity() {
 
     // Frases rápidas del móvil: tocás una y se copia al cuadro de texto (después podés editarla)
     private val quickPhrases = listOf(
-        "Ya voy",
-        "Llego en 10 minutos",
-        "Vayan poniendo la mesa",
-        "Los quiero mucho",
-        "A dormir, que es tarde"
+        T("Ya voy"),
+        T("Llego en 10 minutos"),
+        T("Vayan poniendo la mesa"),
+        T("Los quiero mucho"),
+        T("A dormir, que es tarde")
     )
 
     // móvil
@@ -200,6 +200,38 @@ class MainActivity : Activity() {
             startService(PhoneService::class.java)
         }
         askNotificationPermission()
+        // Primera vez en este equipo: lo primero es elegir el idioma
+        if (!Lang.chosen(this)) main.post { showLanguagePicker(first = true) }
+    }
+
+    /**
+     * Selector de idioma, igual en móvil y en tele (los botones se mueven con el control remoto).
+     * Al elegir, la pantalla se arma de nuevo en el idioma elegido.
+     */
+    private fun showLanguagePicker(first: Boolean) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(12), dp(24), dp(8))
+        }
+        var dialog: AlertDialog? = null
+        var focus: View? = null
+        Lang.all.forEach { (code, name) ->
+            val b = tvButton(name + if (code == Lang.code) "  ✓" else "") {
+                Lang.set(this, code)
+                dialog?.dismiss()
+                recreate()
+            }
+            if (code == Lang.code) focus = b
+            box.addView(b, lp(match, wrap, top = 10))
+        }
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("🌐  Idioma · Language · Idioma")
+            .setView(box)
+            .setCancelable(!first)
+            .create()
+        dialog = dlg
+        dlg.setOnShowListener { focus?.requestFocus() }
+        dlg.show()
     }
 
     override fun onResume() {
@@ -297,7 +329,7 @@ class MainActivity : Activity() {
         try {
             ContextCompat.startForegroundService(this, Intent(this, service))
         } catch (e: Exception) {
-            toast("No se pudo iniciar el servicio en segundo plano.")
+            toast(T("No se pudo iniciar el servicio en segundo plano."))
         }
     }
 
@@ -340,7 +372,7 @@ class MainActivity : Activity() {
         header.addView(logo, LinearLayout.LayoutParams(dp(50), dp(50)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(label("Familia TV", 26f, Pal.text, bold = true), lp(wrap, wrap))
-        titles.addView(label("Mensajes para la tele de casa", 13f, Pal.muted), lp(wrap, wrap))
+        titles.addView(label(T("Mensajes para la tele de casa"), 13f, Pal.muted), lp(wrap, wrap))
         header.addView(titles, LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = dp(14) })
         // Campana: bandeja de notificaciones (pagos recibidos, avisos de vencimiento, respuestas)
         bellBtn = label("🔔", 18f, Pal.text).apply {
@@ -353,10 +385,22 @@ class MainActivity : Activity() {
             setOnClickListener { showInbox() }
         }
         header.addView(bellBtn, LinearLayout.LayoutParams(wrap, wrap))
+        // Globo: cambiar el idioma
+        val langBtn = label("🌐", 18f, Pal.text).apply {
+            gravity = Gravity.CENTER
+            minimumWidth = dp(46)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = withRipple(roundedBg(0x1FFFFFFF, dp(24), 0x2AFFFFFF, dp(1)))
+            isClickable = true
+            isFocusable = true
+            contentDescription = T("Idioma")
+            setOnClickListener { showLanguagePicker(first = false) }
+        }
+        header.addView(langBtn, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(8) })
         root.addView(header, lp(match, wrap))
         refreshBell()
 
-        statusPill = label("●  Comprobando…", 13f, Pal.muted).apply {
+        statusPill = label(T("●  Comprobando…"), 13f, Pal.muted).apply {
             setPadding(dp(14), dp(7), dp(14), dp(7))
             maxLines = 1
             background = roundedBg(0x1FFFFFFF, dp(20), 0x2AFFFFFF, dp(1))
@@ -383,7 +427,7 @@ class MainActivity : Activity() {
 
         if (!Cfg.configured) {
             root.addView(
-                label("La app no está configurada: al compilar faltaron RELAY_URL y RELAY_TOKEN.", 14f, Pal.warn).apply {
+                label(T("La app no está configurada: al compilar faltaron RELAY_URL y RELAY_TOKEN."), 14f, Pal.warn).apply {
                     setPadding(dp(16), dp(12), dp(16), dp(12))
                     background = roundedBg(Pal.card, dp(16), Pal.warn, dp(1))
                 },
@@ -407,7 +451,7 @@ class MainActivity : Activity() {
             setOnClickListener { editName() }
         }
         nameCol.addView(profileName, lp(wrap, wrap))
-        nameCol.addView(label("Tocá la foto o el nombre para cambiarlos", 12f, Pal.muted), lp(wrap, wrap, top = 2))
+        nameCol.addView(label(T("Tocá la foto o el nombre para cambiarlos"), 12f, Pal.muted), lp(wrap, wrap, top = 2))
         profile.addView(profileAvatarHolder, LinearLayout.LayoutParams(dp(64), dp(64)))
         profile.addView(nameCol, LinearLayout.LayoutParams(0, wrap, 1f).apply { marginStart = dp(14) })
         profile.addView(label("✎", 20f, Pal.muted))
@@ -416,7 +460,7 @@ class MainActivity : Activity() {
         // Mensaje: texto, opciones y color
         val composer = glassCard(padH = 18, padV = 14)
         input = EditText(this).apply {
-            hint = "Escribí tu mensaje…"
+            hint = T("Escribí tu mensaje…")
             setHintTextColor(Pal.muted)
             setTextColor(Pal.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
@@ -463,13 +507,13 @@ class MainActivity : Activity() {
         composer.addView(options, lp(match, wrap))
 
         replyHint = label(
-            "Con respuesta, el mensaje toma el control de la tele hasta que alguien elija OK, Voy o Ahora no.",
+            T("Con respuesta, el mensaje toma el control de la tele hasta que alguien elija OK, Voy o Ahora no."),
             12f,
             Pal.muted
         )
         composer.addView(replyHint, lp(match, wrap, top = 8))
 
-        composer.addView(label("Color del mensaje", 12f, Pal.muted), lp(wrap, wrap, top = 14, bottom = 8))
+        composer.addView(label(T("Color del mensaje"), 12f, Pal.muted), lp(wrap, wrap, top = 14, bottom = 8))
         colorRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -478,7 +522,7 @@ class MainActivity : Activity() {
         root.addView(composer, lp(match, wrap, top = 14))
 
         // Frases rápidas
-        root.addView(label("Frases rápidas", 12f, Pal.muted), lp(wrap, wrap, top = 18, bottom = 8))
+        root.addView(label(T("Frases rápidas"), 12f, Pal.muted), lp(wrap, wrap, top = 18, bottom = 8))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         quickPhrases.forEach { phrase ->
             val c = chip(phrase).apply {
@@ -542,17 +586,17 @@ class MainActivity : Activity() {
 
     private fun buildControlCard(): View {
         val card = glassCard(padH = 18, padV = 16, tint = 0xFF5B8CFF.toInt())
-        card.addView(label("🌙  Control de la tele", 18f, Pal.text, bold = true), lp(wrap, wrap))
+        card.addView(label(T("🌙  Control de la tele"), 18f, Pal.text, bold = true), lp(wrap, wrap))
         card.addView(
-            label("Bloqueá la tele cuando haya que descansar. Te pide huella, patrón o PIN.", 13f, Pal.muted),
+            label(T("Bloqueá la tele cuando haya que descansar. Te pide huella, patrón o PIN."), 13f, Pal.muted),
             lp(match, wrap, top = 4, bottom = 14)
         )
 
         // Tele libre: opciones para bloquear
         controlIdle = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val c15 = chip("15 minutos").apply { setOnClickListener { askControl("freeze", "minutes", 15) } }
-        val c60 = chip("1 hora").apply { setOnClickListener { askControl("freeze", "minutes", 60) } }
+        val c15 = chip(T("15 minutos")).apply { setOnClickListener { askControl("freeze", "minutes", 15) } }
+        val c60 = chip(T("1 hora")).apply { setOnClickListener { askControl("freeze", "minutes", 60) } }
         styleControlChip(c15)
         styleControlChip(c60)
         top.addView(c15, LinearLayout.LayoutParams(0, wrap, 1f).apply { rightMargin = dp(8) })
@@ -564,12 +608,12 @@ class MainActivity : Activity() {
         }
         fun refreshNight() {
             val (h, m) = Profile.untilTime(this)
-            night.text = "🌙  Hasta las ${untilLabel(h, m)}"
+            night.text = T("🌙  Hasta las %s", untilLabel(h, m))
             night.setOnClickListener { askControl("freeze", "until", 0, h, m) }
         }
         refreshNight()
         controlIdle.addView(night, lp(match, wrap, top = 8))
-        val pick = chip("⏰  Elegir otra hora…", 14f)
+        val pick = chip(T("⏰  Elegir otra hora…"), 14f)
         styleControlChip(pick)
         pick.setOnClickListener {
             val (h, m) = Profile.untilTime(this)
@@ -578,7 +622,7 @@ class MainActivity : Activity() {
                 refreshNight()
                 askControl("freeze", "until", 0, hh, mm)
             }, h, m, true).apply {
-                setTitle("La tele vuelve a las…")
+                setTitle(T("La tele vuelve a las…"))
             }.show()
         }
         controlIdle.addView(pick, lp(match, wrap, top = 8))
@@ -589,14 +633,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        controlActive.addView(label("La tele está bloqueada", 13f, Pal.muted), lp(wrap, wrap))
+        controlActive.addView(label(T("La tele está bloqueada"), 13f, Pal.muted), lp(wrap, wrap))
         frozenCountdown = label("", 44f, Pal.accentSoft, bold = true).apply {
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         }
         controlActive.addView(frozenCountdown, lp(wrap, wrap, top = 2))
         frozenSub = label("", 13f, Pal.muted).apply { gravity = Gravity.CENTER }
         controlActive.addView(frozenSub, lp(match, wrap, top = 2))
-        val unlock = chip("Desbloquear ahora", 16f).apply {
+        val unlock = chip(T("Desbloquear ahora"), 16f).apply {
             setOnClickListener { askControl("unfreeze", "", 0) }
             background = withRipple(gradientBg(dp(20), intArrayOf(0xFF2ED573.toInt(), 0xFF00A86B.toInt())))
             setTextColor(0xFF08210F.toInt())
@@ -624,11 +668,11 @@ class MainActivity : Activity() {
     }
 
     private fun renderOptions() {
-        durationChip.text = if (longDuration) "⏱  Dura: larga" else "⏱  Dura: normal"
+        durationChip.text = if (longDuration) T("⏱  Dura: larga") else T("⏱  Dura: normal")
         styleChip(durationChip, longDuration && !wantReply)
         durationChip.alpha = if (wantReply) 0.4f else 1f
 
-        replyChip.text = if (wantReply) "↩  Pedir respuesta: sí" else "↩  Pedir respuesta: no"
+        replyChip.text = if (wantReply) T("↩  Pedir respuesta: sí") else T("↩  Pedir respuesta: no")
         styleChip(replyChip, wantReply)
         replyHint.visibility = if (wantReply) View.VISIBLE else View.GONE
     }
@@ -644,7 +688,7 @@ class MainActivity : Activity() {
                 setTextColor(onColor(color))
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                contentDescription = name
+                contentDescription = T(name)
                 isClickable = true
                 scaleX = if (on) 1.08f else 0.92f
                 scaleY = if (on) 1.08f else 0.92f
@@ -674,7 +718,7 @@ class MainActivity : Activity() {
         val accent = accentColor()
         sendBtn.background = withRipple(gradientBg(dp(20), intArrayOf(accent, darken(accent, 0.35f))))
         sendBtn.setTextColor(onColor(accent))
-        if (!sending) sendBtn.text = "Enviar a la tele  ➤"
+        if (!sending) sendBtn.text = T("Enviar a la tele  ➤")
         sendBtn.alpha = if (ready) 1f else 0.45f
     }
 
@@ -696,16 +740,16 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
         }
         AlertDialog.Builder(this)
-            .setTitle("Tu nombre en la tele")
+            .setTitle(T("Tu nombre en la tele"))
             .setView(field)
-            .setPositiveButton("Guardar") { _, _ ->
+            .setPositiveButton(T("Guardar")) { _, _ ->
                 val v = field.text.toString().trim()
                 if (v.isNotEmpty()) {
                     Profile.setName(this, v)
                     renderProfile()
                 }
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(T("Cancelar"), null)
             .show()
     }
 
@@ -717,7 +761,7 @@ class MainActivity : Activity() {
                 .addCategory(Intent.CATEGORY_OPENABLE)
             startActivityForResult(pick, reqPhoto)
         } catch (e: Exception) {
-            toast("No se pudo abrir la galería.")
+            toast(T("No se pudo abrir la galería."))
         }
     }
 
@@ -734,7 +778,7 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         val b64 = loadAvatar(uri)
         if (b64 == null) {
-            toast("No se pudo usar esa foto.")
+            toast(T("No se pudo usar esa foto."))
         } else {
             Profile.setAvatar(this, b64)
             renderProfile()
@@ -792,12 +836,12 @@ class MainActivity : Activity() {
         val text = input.text.toString().trim()
         if (text.isEmpty() || sending) return
         if (!Cfg.configured) {
-            showFeedback("Falta configurar RELAY_URL y RELAY_TOKEN.", Pal.bad)
+            showFeedback(T("Falta configurar RELAY_URL y RELAY_TOKEN."), Pal.bad)
             return
         }
 
         sending = true
-        sendBtn.text = "Enviando…"
+        sendBtn.text = T("Enviando…")
         updateSendState()
 
         val askedReply = wantReply
@@ -814,7 +858,7 @@ class MainActivity : Activity() {
 
         Net.http.newCall(relayRequest("/send").post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { sendDone(false, false, askedReply, "No hay conexión con el servidor. Probá de nuevo.") }
+                runOnUiThread { sendDone(false, false, askedReply, T("No hay conexión con el servidor. Probá de nuevo.")) }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -827,14 +871,14 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     when {
                         code in 200..299 -> sendDone(true, delivered, askedReply, null, total, entregadas)
-                        code == 409 -> sendDone(false, false, askedReply, "Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele.")
+                        code == 409 -> sendDone(false, false, askedReply, T("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele."))
                         code == 404 -> {
-                            sendDone(false, false, askedReply, "Esa TV ya no está vinculada.")
+                            sendDone(false, false, askedReply, T("Esa TV ya no está vinculada."))
                             fetchStatus()
                         }
-                        code == 401 -> sendDone(false, false, askedReply, "El código de acceso no coincide con el del servidor.")
-                        code == 402 -> sendDone(false, false, askedReply, "El plan venció. Activalo desde la tele (botón Plan).")
-                        else -> sendDone(false, false, askedReply, "El servidor respondió con un error ($code).")
+                        code == 401 -> sendDone(false, false, askedReply, T("El código de acceso no coincide con el del servidor."))
+                        code == 402 -> sendDone(false, false, askedReply, T("El plan venció. Activalo desde la tele (botón Plan)."))
+                        else -> sendDone(false, false, askedReply, T("El servidor respondió con un error (%s).", code))
                     }
                 }
             }
@@ -849,17 +893,17 @@ class MainActivity : Activity() {
             renderOptions()
             when {
                 total > 1 && entregadas == total ->
-                    showFeedback("Enviado a las $total TV." + if (askedReply) " Te aviso cuando respondan." else "", Pal.ok)
+                    showFeedback(T("Enviado a las %s TV.", total) + if (askedReply) " " + T("Te aviso cuando respondan.") else "", Pal.ok)
                 total > 1 && entregadas > 0 ->
-                    showFeedback("Enviado a $entregadas de $total TV. En las apagadas se muestra apenas se prendan.", Pal.warn)
-                total > 1 -> showFeedback("Quedó en cola: se muestra apenas se prendan las TV.", Pal.warn)
-                delivered && askedReply -> showFeedback("Enviado. Te aviso cuando respondan.", Pal.ok)
-                delivered -> showFeedback("Enviado. La tele lo muestra ahora.", Pal.ok)
-                else -> showFeedback("Quedó en cola: se muestra apenas se prenda la tele.", Pal.warn)
+                    showFeedback(T("Enviado a %s de %s TV. En las apagadas se muestra apenas se prendan.", entregadas, total), Pal.warn)
+                total > 1 -> showFeedback(T("Quedó en cola: se muestra apenas se prendan las TV."), Pal.warn)
+                delivered && askedReply -> showFeedback(T("Enviado. Te aviso cuando respondan."), Pal.ok)
+                delivered -> showFeedback(T("Enviado. La tele lo muestra ahora."), Pal.ok)
+                else -> showFeedback(T("Quedó en cola: se muestra apenas se prenda la tele."), Pal.warn)
             }
             fetchStatus()
         } else {
-            showFeedback(error ?: "No se pudo enviar.", Pal.bad)
+            showFeedback(error ?: T("No se pudo enviar."), Pal.bad)
         }
         updateSendState()
     }
@@ -884,7 +928,7 @@ class MainActivity : Activity() {
                         o.optJSONArray("avisos")?.let { av ->
                             for (i in 0 until av.length()) {
                                 val a = av.optJSONObject(i) ?: continue
-                                Inbox.add(this@MainActivity, a.optString("aid"), a.optString("title"), a.optString("text"), a.optLong("ts"))
+                                Inbox.add(this@MainActivity, a.optString("aid"), Lang.pick(a, "titulo", "i18n", a.optString("title")), Lang.pick(a, "texto", "i18n", a.optString("text")), a.optLong("ts"))
                             }
                             refreshBell()
                         }
@@ -916,15 +960,15 @@ class MainActivity : Activity() {
     }
 
     private fun renderPlanLine(plan: JSONObject) {
-        val fmt = SimpleDateFormat("d 'de' MMMM", Locale("es"))
+        val fmt = SimpleDateFormat(Lang.dayMonthFmt, Lang.locale)
         val hasta = plan.optLong("hasta", 0L)
         val fecha = if (hasta > 0) fmt.format(Date(hasta)) else ""
         val cap = plan.optInt("capacidad", 0)
         val tvs = if (cap > 0) " · ${plan.optInt("tvs_usadas")}/$cap TV" else ""
         val t = when (plan.optString("estado")) {
-            "activo" -> "💳  Plan activo hasta el $fecha$tvs"
-            "prueba" -> "💳  Prueba hasta el $fecha$tvs"
-            "vencido" -> "💳  Plan vencido: se renueva desde «Plan» en la tele"
+            "activo" -> T("💳  Plan activo hasta el %s", fecha) + tvs
+            "prueba" -> T("💳  Prueba hasta el %s", fecha) + tvs
+            "vencido" -> T("💳  Plan vencido: se renueva desde «Plan» en la tele")
             else -> ""
         }
         planLine.text = t
@@ -935,14 +979,14 @@ class MainActivity : Activity() {
         val items = Inbox.items(this).sortedByDescending { it.ts }
         Inbox.markAllRead(this)
         refreshBell()
-        val fmt = SimpleDateFormat("d MMM, HH:mm", Locale("es"))
+        val fmt = SimpleDateFormat("d MMM, HH:mm", Lang.locale)
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         if (items.isEmpty()) {
             list.addView(
-                label("Todavía no hay notificaciones. Acá vas a ver los pagos recibidos, los avisos de vencimiento del plan y las respuestas a tus mensajes.", 14f, Pal.muted),
+                label(T("Todavía no hay notificaciones. Acá vas a ver los pagos recibidos, los avisos de vencimiento del plan y las respuestas a tus mensajes."), 14f, Pal.muted),
                 lp(match, wrap)
             )
         }
@@ -958,9 +1002,9 @@ class MainActivity : Activity() {
             list.addView(card, lp(match, wrap, top = 10))
         }
         AlertDialog.Builder(this)
-            .setTitle("Notificaciones")
+            .setTitle(T("Notificaciones"))
             .setView(ScrollView(this).apply { addView(list) })
-            .setPositiveButton("Cerrar", null)
+            .setPositiveButton(T("Cerrar"), null)
             .show()
     }
 
@@ -980,22 +1024,22 @@ class MainActivity : Activity() {
         val pending = list.sumOf { it.pending }
         val multi = tvList.size > 1
         val (t, c) = when {
-            list.isEmpty() -> "●  Ninguna TV vinculada todavía" to Pal.warn
+            list.isEmpty() -> T("●  Ninguna TV vinculada todavía") to Pal.warn
             online == list.size && list.size == 1 ->
-                (if (multi) "●  ${list[0].name} conectada" else "●  TV conectada") to Pal.ok
-            online == list.size -> "●  ${list.size} TV conectadas" to Pal.ok
+                (if (multi) T("●  %s conectada", list[0].name) else T("●  TV conectada")) to Pal.ok
+            online == list.size -> T("●  %s TV conectadas", list.size) to Pal.ok
             online == 0 -> {
-                val who = if (list.size == 1) (if (multi) "${list[0].name} apagada" else "TV apagada") else "Las ${list.size} TV apagadas"
-                (if (pending > 0) "●  $who · $pending en cola" else "●  $who o sin red") to Pal.warn
+                val who = if (list.size == 1) (if (multi) T("%s apagada", list[0].name) else T("TV apagada")) else T("Las %s TV apagadas", list.size)
+                (if (pending > 0) T("●  %s · %s en cola", who, pending) else T("●  %s o sin red", who)) to Pal.warn
             }
-            else -> "●  $online de ${list.size} TV conectadas" to Pal.warn
+            else -> T("●  %s de %s TV conectadas", online, list.size) to Pal.warn
         }
         statusPill.text = t
         statusPill.setTextColor(c)
 
         // Bloqueo: el de la TV elegida; con "Todas", el primero que haya (y cuántas están bloqueadas)
         val frozen = list.filter { it.freeze != null }
-        frozenWhere = if (sel == null && multi && frozen.isNotEmpty()) "${frozen.size} de ${list.size} TV" else ""
+        frozenWhere = if (sel == null && multi && frozen.isNotEmpty()) T("%s de %s TV", frozen.size, list.size) else ""
         applyFreeze(frozen.firstOrNull()?.freeze)
     }
 
@@ -1006,7 +1050,7 @@ class MainActivity : Activity() {
         }
         tvPicker.visibility = View.VISIBLE
         tvPickerRow.removeAllViews()
-        tvPickerRow.addView(label("Para:", 13f, Pal.muted), lp(wrap, wrap).apply { rightMargin = dp(10) })
+        tvPickerRow.addView(label(T("Para:"), 13f, Pal.muted), lp(wrap, wrap).apply { rightMargin = dp(10) })
         val selected = target()
         fun add(text: String, id: String?, tv: TvInfo?) {
             val c = chip(text, 13f)
@@ -1025,7 +1069,7 @@ class MainActivity : Activity() {
             }
             tvPickerRow.addView(c, lp(wrap, wrap).apply { rightMargin = dp(8) })
         }
-        add("Todas", null, null)
+        add(T("Todas"), null, null)
         tvList.forEach { add(it.name, it.id, it) }
     }
 
@@ -1033,10 +1077,10 @@ class MainActivity : Activity() {
     private fun manageTv(tv: TvInfo) {
         AlertDialog.Builder(this)
             .setTitle(tv.name)
-            .setItems(arrayOf("Cambiar nombre", "Quitar esta TV")) { _, which ->
+            .setItems(arrayOf(T("Cambiar nombre"), T("Quitar esta TV"))) { _, which ->
                 if (which == 0) renameTv(tv) else forgetTv(tv)
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(T("Cancelar"), null)
             .show()
     }
 
@@ -1048,23 +1092,23 @@ class MainActivity : Activity() {
             setSingleLine()
         }
         AlertDialog.Builder(this)
-            .setTitle("Nombre de la TV")
+            .setTitle(T("Nombre de la TV"))
             .setView(field)
-            .setPositiveButton("Guardar") { _, _ ->
+            .setPositiveButton(T("Guardar")) { _, _ ->
                 val n = field.text.toString().trim()
                 if (n.isNotEmpty()) postTv("/tv/rename", JSONObject().put("id", tv.id).put("name", n)) { code, _ ->
-                    if (code in 200..299) fetchStatus() else showFeedback("No se pudo cambiar el nombre ($code).", Pal.bad)
+                    if (code in 200..299) fetchStatus() else showFeedback(T("No se pudo cambiar el nombre (%s).", code), Pal.bad)
                 }
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(T("Cancelar"), null)
             .show()
     }
 
     private fun forgetTv(tv: TvInfo) {
         AlertDialog.Builder(this)
-            .setTitle("¿Quitar «${tv.name}»?")
-            .setMessage("Se libera su lugar en el plan. Si esa TV vuelve a abrir la app, se vincula de nuevo.")
-            .setPositiveButton("Quitar") { _, _ ->
+            .setTitle(T("¿Quitar «%s»?", tv.name))
+            .setMessage(T("Se libera su lugar en el plan. Si esa TV vuelve a abrir la app, se vincula de nuevo."))
+            .setPositiveButton(T("Quitar")) { _, _ ->
                 postTv("/tv/forget", JSONObject().put("id", tv.id)) { code, o ->
                     when {
                         code in 200..299 -> {
@@ -1073,14 +1117,14 @@ class MainActivity : Activity() {
                                 Profile.setTvTarget(this, null)
                             }
                             fetchStatus()
-                            showFeedback("TV quitada.", Pal.ok)
+                            showFeedback(T("TV quitada."), Pal.ok)
                         }
-                        code == 409 -> showFeedback("Esa TV está prendida: apagala primero (si no, se vuelve a vincular sola).", Pal.warn)
-                        else -> showFeedback("No se pudo quitar la TV ($code ${o?.optString("error").orEmpty()}).", Pal.bad)
+                        code == 409 -> showFeedback(T("Esa TV está prendida: apagala primero (si no, se vuelve a vincular sola)."), Pal.warn)
+                        else -> showFeedback(T("No se pudo quitar la TV (%s).", "$code ${o?.optString("error").orEmpty()}"), Pal.bad)
                     }
                 }
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(T("Cancelar"), null)
             .show()
     }
 
@@ -1088,7 +1132,7 @@ class MainActivity : Activity() {
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
         Net.http.newCall(relayRequest(path).post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { showFeedback("No hay conexión con el servidor. Probá de nuevo.", Pal.bad) }
+                runOnUiThread { showFeedback(T("No hay conexión con el servidor. Probá de nuevo."), Pal.bad) }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -1103,10 +1147,10 @@ class MainActivity : Activity() {
     /** state: 0 comprobando, 1 TV conectada, 2 TV apagada, 3 sin servidor */
     private fun renderStatus(state: Int, pending: Int) {
         val (t, c) = when (state) {
-            1 -> "●  TV conectada" to Pal.ok
-            2 -> (if (pending > 0) "●  TV apagada · $pending en cola" else "●  TV apagada o sin red") to Pal.warn
-            3 -> "●  Sin conexión con el servidor" to Pal.bad
-            else -> "●  Comprobando…" to Pal.muted
+            1 -> T("●  TV conectada") to Pal.ok
+            2 -> (if (pending > 0) T("●  TV apagada · %s en cola", pending) else T("●  TV apagada o sin red")) to Pal.warn
+            3 -> T("●  Sin conexión con el servidor") to Pal.bad
+            else -> T("●  Comprobando…") to Pal.muted
         }
         statusPill.text = t
         statusPill.setTextColor(c)
@@ -1123,8 +1167,8 @@ class MainActivity : Activity() {
             val bm = getSystemService(BiometricManager::class.java)
             if (bm != null && bm.canAuthenticate(allowed) == BiometricManager.BIOMETRIC_SUCCESS) {
                 val prompt = BiometricPrompt.Builder(this)
-                    .setTitle("Confirmá que sos vos")
-                    .setSubtitle("Huella, cara, patrón o PIN de tu móvil")
+                    .setTitle(T("Confirmá que sos vos"))
+                    .setSubtitle(T("Huella, cara, patrón o PIN de tu móvil"))
                     .setAllowedAuthenticators(allowed)
                     .build()
                 prompt.authenticate(
@@ -1143,7 +1187,7 @@ class MainActivity : Activity() {
         }
         val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         val intent = if (km.isDeviceSecure) {
-            km.createConfirmDeviceCredentialIntent("Confirmá que sos vos", "Para bloquear o desbloquear la tele")
+            km.createConfirmDeviceCredentialIntent(T("Confirmá que sos vos"), T("Para bloquear o desbloquear la tele"))
         } else {
             null
         }
@@ -1158,7 +1202,7 @@ class MainActivity : Activity() {
     /** Primero se confirma la identidad en el móvil; recién ahí se manda la orden. */
     private fun askControl(action: String, mode: String, minutes: Int, hour: Int = 7, minute: Int = 0) {
         if (!Cfg.configured) {
-            showFeedback("Falta configurar RELAY_URL y RELAY_TOKEN.", Pal.bad)
+            showFeedback(T("Falta configurar RELAY_URL y RELAY_TOKEN."), Pal.bad)
             return
         }
         authenticate { sendControl(action, mode, minutes, sessionPin, hour, minute) }
@@ -1178,7 +1222,7 @@ class MainActivity : Activity() {
 
         Net.http.newCall(relayRequest("/control").post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { showFeedback("No hay conexión con el servidor. Probá de nuevo.", Pal.bad) }
+                runOnUiThread { showFeedback(T("No hay conexión con el servidor. Probá de nuevo."), Pal.bad) }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -1198,46 +1242,46 @@ class MainActivity : Activity() {
                 val delivered = o?.optBoolean("delivered", false) ?: false
                 val total = o?.optInt("total", 1) ?: 1
                 val entregadas = o?.optInt("entregadas", if (delivered) 1 else 0) ?: 0
-                val who = if (total > 1) "las $total TV" else selectedTv()?.let { "«${it.name}»" } ?: "la tele"
+                val tvName = selectedTv()?.name
                 if (action == "unfreeze") {
                     showFeedback(
                         when {
-                            delivered -> "${who.replaceFirstChar { it.uppercase() }} ${if (total > 1) "desbloqueadas" else "desbloqueada"}."
-                            total > 1 -> "Desbloqueo anotado: ${total - entregadas} de $total TV están apagadas."
-                            else -> "Desbloqueo anotado: la tele está apagada."
+                            delivered -> if (total > 1) T("Las %s TV se desbloquearon.", total) else if (tvName != null) T("«%s» se desbloqueó.", tvName) else T("La tele se desbloqueó.")
+                            total > 1 -> T("Desbloqueo anotado: %s de %s TV están apagadas.", total - entregadas, total)
+                            else -> T("Desbloqueo anotado: la tele está apagada.")
                         },
                         Pal.ok
                     )
                 } else {
                     showFeedback(
                         when {
-                            delivered -> "${who.replaceFirstChar { it.uppercase() }} ${if (total > 1) "bloqueadas" else "bloqueada"}."
-                            total > 1 -> "Bloqueadas $entregadas de $total TV. Las apagadas se bloquean cuando se prendan."
-                            else -> "Anotado. La tele está apagada: se bloquea cuando se prenda."
+                            delivered -> if (total > 1) T("Las %s TV se bloquearon.", total) else if (tvName != null) T("«%s» se bloqueó.", tvName) else T("La tele se bloqueó.")
+                            total > 1 -> T("Bloqueadas %s de %s TV. Las apagadas se bloquean cuando se prendan.", entregadas, total)
+                            else -> T("Anotado. La tele está apagada: se bloquea cuando se prenda.")
                         },
                         if (delivered) Pal.ok else Pal.warn
                     )
                 }
                 fetchStatus() // el estado por TV lo manda el servidor
             }
-            code == 409 -> showFeedback("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele.", Pal.bad)
+            code == 409 -> showFeedback(T("Todavía no hay ninguna TV vinculada. Abrí Familia TV en la tele."), Pal.bad)
             code == 404 -> {
-                showFeedback("Esa TV ya no está vinculada.", Pal.bad)
+                showFeedback(T("Esa TV ya no está vinculada."), Pal.bad)
                 fetchStatus()
             }
-            code == 401 -> showFeedback("El código de acceso no coincide con el del servidor.", Pal.bad)
-            code == 402 -> showFeedback("El plan venció. Activalo desde la tele (botón Plan).", Pal.bad)
+            code == 401 -> showFeedback(T("El código de acceso no coincide con el del servidor."), Pal.bad)
+            code == 402 -> showFeedback(T("El plan venció. Activalo desde la tele (botón Plan)."), Pal.bad)
             code == 403 && (error == "pin_requerido" || error == "pin_incorrecto") -> {
                 sessionPin = null
-                askPin(if (error == "pin_incorrecto") "PIN incorrecto. Probá de nuevo." else "Escribí el PIN de padres.") { p ->
+                askPin(if (error == "pin_incorrecto") T("PIN incorrecto. Probá de nuevo.") else T("Escribí el PIN de padres.")) { p ->
                     sendControl(action, mode, minutes, p, hour, minute)
                 }
             }
             code == 429 -> {
                 val mins = ((o?.optInt("reintentar_en") ?: 600) + 59) / 60
-                showFeedback("Demasiados intentos. Probá de nuevo en $mins min.", Pal.bad)
+                showFeedback(T("Demasiados intentos. Probá de nuevo en %s min.", mins), Pal.bad)
             }
-            else -> showFeedback("No se pudo completar ($code).", Pal.bad)
+            else -> showFeedback(T("No se pudo completar (%s).", code), Pal.bad)
         }
     }
 
@@ -1249,14 +1293,14 @@ class MainActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
         }
         AlertDialog.Builder(this)
-            .setTitle("PIN de padres")
+            .setTitle(T("PIN de padres"))
             .setMessage(message)
             .setView(field)
-            .setPositiveButton("Confirmar") { _, _ ->
+            .setPositiveButton(T("Confirmar")) { _, _ ->
                 val p = field.text.toString().trim()
                 if (p.isNotEmpty()) onPin(p)
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(T("Cancelar"), null)
             .show()
     }
 
@@ -1267,7 +1311,7 @@ class MainActivity : Activity() {
         } else {
             val left = b.optLong("hasta") - b.optLong("ahora")
             frozenUntil = if (left > 0L) SystemClock.elapsedRealtime() + left else 0L
-            frozenLabel = b.optString("label")
+            frozenLabel = Lang.freezeLabel(b.optString("label"), b.optJSONObject("lk"))
             frozenBy = b.optString("by")
         }
         renderControl()
@@ -1278,7 +1322,7 @@ class MainActivity : Activity() {
         controlIdle.visibility = if (frozen) View.GONE else View.VISIBLE
         controlActive.visibility = if (frozen) View.VISIBLE else View.GONE
         if (frozen) {
-            frozenSub.text = listOf(frozenLabel, if (frozenBy.isNotBlank()) "por $frozenBy" else "", frozenWhere)
+            frozenSub.text = listOf(frozenLabel, if (frozenBy.isNotBlank()) T("por %s", frozenBy) else "", frozenWhere)
                 .filter { it.isNotBlank() }.joinToString(" · ")
             updateCountdown()
         }
@@ -1310,7 +1354,7 @@ class MainActivity : Activity() {
         root.addView(logo, LinearLayout.LayoutParams(dp(84), dp(84)))
 
         val titleView = label("Familia TV", 42f, Pal.text, bold = true)
-        val subtitleView = label("Los mensajes de la familia aparecen directo en tu pantalla", 20f, Pal.muted)
+        val subtitleView = label(T("Los mensajes de la familia aparecen directo en tu pantalla"), 20f, Pal.muted)
         root.addView(titleView, lp(wrap, wrap, top = 12))
         root.addView(subtitleView, lp(wrap, wrap, top = 2))
         // Si falta el permiso, el aviso necesita lugar: el logo y la frase se esconden hasta que se dé
@@ -1354,20 +1398,20 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         tvPermBox.addView(
-            label("Falta un permiso para mostrar los mensajes sobre lo que estás viendo.", 18f, Pal.warn, bold = true),
+            label(T("Falta un permiso para mostrar los mensajes sobre lo que estás viendo."), 18f, Pal.warn, bold = true),
             lp(wrap, wrap)
         )
         tvPermBox.addView(
-            label("Tocá el botón y activá \"Mostrar sobre otras apps\" para Familia TV.", 15f, Pal.text),
+            label(T("Tocá el botón y activá «Mostrar sobre otras apps» para Familia TV."), 15f, Pal.text),
             lp(wrap, wrap, top = 4)
         )
         tvPermBox.addView(
-            label("Con una PC: adb shell appops set $packageName SYSTEM_ALERT_WINDOW allow", 12f, Pal.muted).apply {
+            label(T("Con una PC: adb shell appops set %s SYSTEM_ALERT_WINDOW allow", packageName), 12f, Pal.muted).apply {
                 typeface = Typeface.MONOSPACE
             },
             lp(wrap, wrap, top = 2)
         )
-        tvPermBox.addView(tvButton("Abrir ajustes del permiso") { openOverlaySettings() }, lp(wrap, wrap, top = 8))
+        tvPermBox.addView(tvButton(T("Abrir ajustes del permiso")) { openOverlaySettings() }, lp(wrap, wrap, top = 8))
         root.addView(tvPermBox, lp(wrap, wrap, top = 10))
 
         rootFrame.addView(root, FrameLayout.LayoutParams(match, match))
@@ -1384,22 +1428,24 @@ class MainActivity : Activity() {
             soundBtn.text = soundButtonText()
             Sounds.play(this) // se escucha cómo suena el que quedó elegido
         }
-        planBtn = tvButton("\uD83D\uDCB3  Plan") { openPay() }
+        planBtn = tvButton("\uD83D\uDCB3  " + T("Plan")) { openPay() }
         val extras = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
+        val langBtn = tvButton("\uD83C\uDF10  " + Lang.nameOf(Lang.code)) { showLanguagePicker(first = false) }
         extras.addView(soundBtn, lp(wrap, wrap).apply { rightMargin = dp(14) })
-        extras.addView(planBtn, lp(wrap, wrap))
+        extras.addView(planBtn, lp(wrap, wrap).apply { rightMargin = dp(14) })
+        extras.addView(langBtn, lp(wrap, wrap))
         bottom.addView(extras, lp(wrap, wrap, bottom = 14))
 
         val tests = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val test = tvButton("Probar mensaje") { sendTest(RelayService.ACTION_TEST) }
-        val testReply = tvButton("Probar con respuesta") { sendTest(RelayService.ACTION_TEST_REPLY) }
-        val testFreeze = tvButton("Probar bloqueo (45 s)") { sendTest(RelayService.ACTION_TEST_FREEZE) }
+        val test = tvButton(T("Probar mensaje")) { sendTest(RelayService.ACTION_TEST) }
+        val testReply = tvButton(T("Probar con respuesta")) { sendTest(RelayService.ACTION_TEST_REPLY) }
+        val testFreeze = tvButton(T("Probar bloqueo (45 s)")) { sendTest(RelayService.ACTION_TEST_FREEZE) }
         tests.addView(test, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testReply, lp(wrap, wrap).apply { rightMargin = dp(14) })
         tests.addView(testFreeze, lp(wrap, wrap))
@@ -1430,8 +1476,8 @@ class MainActivity : Activity() {
         )
         clockBox.addView(
             TextClock(this).apply {
-                format12Hour = "EEEE d 'de' MMMM"
-                format24Hour = "EEEE d 'de' MMMM"
+                format12Hour = Lang.weekdayDateFmt
+                format24Hour = Lang.weekdayDateFmt
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 setTextColor(Pal.muted)
                 gravity = Gravity.END
@@ -1467,18 +1513,18 @@ class MainActivity : Activity() {
 
     private fun showPlan(plan: JSONObject) {
         val hasta = if (plan.isNull("hasta")) 0L else plan.optLong("hasta", 0L)
-        val fecha = if (hasta > 0) SimpleDateFormat("d/M", Locale("es")).format(Date(hasta)) else ""
+        val fecha = if (hasta > 0) SimpleDateFormat("d/M", Lang.locale).format(Date(hasta)) else ""
         val usd = plan.optInt("precio_usd", 5)
         val days = if (hasta > 0) ((hasta - System.currentTimeMillis()) / 86_400_000L).toInt() + 1 else 0
         planCache = plan
         val cap = plan.optInt("capacidad", 0)
         val tvsTxt = if (cap > 0) " · ${plan.optInt("tvs_usadas")}/$cap TV" else ""
         planBtn.text = when {
-            RelayState.limit -> "\uD83D\uDCB3  Sumar TV (+${plan.optInt("tvs_por_grupo", 3)} por ${plan.optInt("precio_extra_usd", 8)} USD)"
-            plan.optString("estado") == "activo" -> "\uD83D\uDCB3  Plan activo hasta $fecha$tvsTxt"
-            plan.optString("estado") == "prueba" -> "\uD83D\uDCB3  Prueba: $days ${if (days == 1) "día" else "días"}$tvsTxt"
-            plan.optString("estado") == "vencido" -> "\uD83D\uDCB3  Plan vencido: activar"
-            else -> "\uD83D\uDCB3  Plan ($usd USDC)"
+            RelayState.limit -> "\uD83D\uDCB3  " + T("Sumar TV (+%s por %s USD)", plan.optInt("tvs_por_grupo", 3), plan.optInt("precio_extra_usd", 8))
+            plan.optString("estado") == "activo" -> "\uD83D\uDCB3  " + T("Plan activo hasta %s", fecha) + tvsTxt
+            plan.optString("estado") == "prueba" -> "\uD83D\uDCB3  " + (if (days == 1) T("Prueba: %s día", days) else T("Prueba: %s días", days)) + tvsTxt
+            plan.optString("estado") == "vencido" -> "\uD83D\uDCB3  " + T("Plan vencido: activar")
+            else -> "\uD83D\uDCB3  " + T("Plan (%s USDC)", usd)
         }
     }
 
@@ -1504,7 +1550,7 @@ class MainActivity : Activity() {
     private fun openPay() {
         if (payOverlay != null) return
         if (!Cfg.configured) {
-            toast("Falta configurar RELAY_URL y RELAY_TOKEN.")
+            toast(T("Falta configurar RELAY_URL y RELAY_TOKEN."))
             return
         }
         payDone = false
@@ -1521,9 +1567,9 @@ class MainActivity : Activity() {
         }
 
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(label("\uD83D\uDCB3  Tu plan", 34f, Pal.text, bold = true), lp(wrap, wrap))
+        left.addView(label("\uD83D\uDCB3  " + T("Tu plan"), 34f, Pal.text, bold = true), lp(wrap, wrap))
         left.addView(
-            label("Escaneá el QR con tu billetera de Solana (Phantom, Solflare…)", 18f, Pal.muted),
+            label(T("Escaneá el QR con tu billetera de Solana (Phantom, Solflare…)"), 18f, Pal.muted),
             lp(wrap, wrap, top = 6)
         )
         val plan = planCache
@@ -1536,23 +1582,23 @@ class MainActivity : Activity() {
         val what = label("", 20f, Pal.text, bold = true)
         left.addView(what, lp(wrap, wrap, top = 12))
         val products = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val planBtn2 = payButton("Plan: hasta $base TV · $usdPlan USD") { payProduct = "plan"; createPay(payMethod) }
-        val extraBtn = payButton("+$pack TV · $usdExtra USD") { payProduct = "extra"; createPay(payMethod) }
+        val planBtn2 = payButton(T("Plan: hasta %s TV · %s USD", base, usdPlan)) { payProduct = "plan"; createPay(payMethod) }
+        val extraBtn = payButton(T("+%s TV · %s USD", pack, usdExtra)) { payProduct = "extra"; createPay(payMethod) }
         products.addView(planBtn2, lp(wrap, wrap).apply { rightMargin = dp(12) })
         products.addView(extraBtn, lp(wrap, wrap))
         left.addView(products, lp(wrap, wrap, top = 8))
 
         val amount = label("", 30f, Pal.accentSoft, bold = true)
         left.addView(amount, lp(wrap, wrap, top = 12))
-        val status = label("Preparando el pago…", 20f, Pal.text).apply { maxLines = 6 }
+        val status = label(T("Preparando el pago…"), 20f, Pal.text).apply { maxLines = 6 }
         left.addView(status, lp(wrap, wrap, top = 6))
 
         val methods = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val usdcBtn = payButton("Pagar USDC") { createPay("usdc") }
-        val solBtn = payButton("Pagar SOL") { createPay("sol") }
+        val usdcBtn = payButton(T("Pagar USDC")) { createPay("usdc") }
+        val solBtn = payButton(T("Pagar SOL")) { createPay("sol") }
         methods.addView(usdcBtn, lp(wrap, wrap).apply { rightMargin = dp(12) })
         methods.addView(solBtn, lp(wrap, wrap))
-        methods.addView(payButton("Cerrar") { closePay() }, lp(wrap, wrap).apply { marginStart = dp(12) })
+        methods.addView(payButton(T("Cerrar")) { closePay() }, lp(wrap, wrap).apply { marginStart = dp(12) })
         left.addView(methods, lp(wrap, wrap, top = 12))
         row.addView(left, LinearLayout.LayoutParams(0, wrap, 1f))
 
@@ -1599,21 +1645,21 @@ class MainActivity : Activity() {
         payMethod = metodo
         val p = planCache
         payWhat?.text = if (payProduct == "extra") {
-            "Sumar ${p?.optInt("tvs_por_grupo", 3) ?: 3} TV más (hoy ${p?.optInt("tvs_usadas") ?: 0} de ${p?.optInt("capacidad") ?: 3})"
+            T("Sumar %s TV más (hoy %s de %s)", p?.optInt("tvs_por_grupo", 3) ?: 3, p?.optInt("tvs_usadas") ?: 0, p?.optInt("capacidad") ?: 3)
         } else {
-            "Plan de ${p?.optInt("dias", 30) ?: 30} días · hasta ${p?.optInt("tvs_incluidas", 3) ?: 3} TV"
+            T("Plan de %s días · hasta %s TV", p?.optInt("dias", 30) ?: 30, p?.optInt("tvs_incluidas", 3) ?: 3)
         }
         payId = null
         payDone = false
         payQr?.setImageDrawable(null)
         payAmount?.text = ""
         payStatus?.setTextColor(Pal.text)
-        payStatus?.text = "Preparando el pago…"
+        payStatus?.text = T("Preparando el pago…")
         val body = JSONObject().put("metodo", metodo).put("producto", payProduct).toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
         Net.http.newCall(relayRequest("/pay/create").post(body).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { payMessage("No hay conexión con el servidor. Probá de nuevo.", Pal.bad) }
+                runOnUiThread { payMessage(T("No hay conexión con el servidor. Probá de nuevo."), Pal.bad) }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -1627,9 +1673,9 @@ class MainActivity : Activity() {
                         showPayRequest(pago)
                     } else {
                         when (o?.optString("error")) {
-                            "precio_no_disponible" -> payMessage("No pude averiguar el precio de SOL. Probá con USDC.", Pal.bad)
-                            "pagos_desactivados" -> payMessage("Los pagos todavía no están configurados.", Pal.bad)
-                            else -> payMessage("No se pudo generar el pago ($code).", Pal.bad)
+                            "precio_no_disponible" -> payMessage(T("No pude averiguar el precio de SOL. Probá con USDC."), Pal.bad)
+                            "pagos_desactivados" -> payMessage(T("Los pagos todavía no están configurados."), Pal.bad)
+                            else -> payMessage(T("No se pudo generar el pago (%s).", code), Pal.bad)
                         }
                     }
                 }
@@ -1648,8 +1694,8 @@ class MainActivity : Activity() {
         payExpiresAt = SystemClock.elapsedRealtime() + pago.optLong("vence_en", 0L)
         payQr?.setImageDrawable(qrDrawable(pago.optString("url")))
         val moneda = pago.optString("moneda")
-        payAmount?.text = "Pagá ${pago.optString("monto")} $moneda"
-        payMessage("Esperando el pago…", Pal.text)
+        payAmount?.text = T("Pagá %s %s", pago.optString("monto"), moneda)
+        payMessage(T("Esperando el pago…"), Pal.text)
         main.postDelayed(payPoll, 3_000)
     }
 
@@ -1679,45 +1725,45 @@ class MainActivity : Activity() {
                 main.removeCallbacks(payPoll)
                 val plan = o.optJSONObject("plan")
                 val hasta = plan?.optLong("hasta", 0L) ?: 0L
-                val fecha = if (hasta > 0) SimpleDateFormat("d 'de' MMMM", Locale("es")).format(Date(hasta)) else ""
+                val fecha = if (hasta > 0) SimpleDateFormat(Lang.dayMonthFmt, Lang.locale).format(Date(hasta)) else ""
                 payQr?.setImageDrawable(null)
-                payAmount?.text = "✅  ¡Pago recibido!"
-                val recibo = (if (newer) last?.optString("texto") else o.optJSONObject("pago")?.optJSONObject("recibo")?.optString("texto")).orEmpty()
+                payAmount?.text = T("✅  ¡Pago recibido!")
+                val recibo = Lang.pick(if (newer) last else o.optJSONObject("pago")?.optJSONObject("recibo"), "texto")
                 if (recibo.isNotBlank()) {
                     payMessage(recibo, Pal.ok)
                 } else if (o.optJSONObject("pago")?.optString("producto") == "extra") {
-                    payMessage("Gracias. Ya podés vincular hasta ${plan?.optInt("capacidad") ?: 0} TV: prendé la nueva y abrí Familia TV.", Pal.ok)
+                    payMessage(T("Gracias. Ya podés vincular hasta %s TV: prendé la nueva y abrí Familia TV.", plan?.optInt("capacidad") ?: 0), Pal.ok)
                 } else {
-                    payMessage("Gracias. Tu plan está activo hasta el $fecha.", Pal.ok)
+                    payMessage(T("Gracias. Tu plan está activo hasta el %s.", fecha), Pal.ok)
                 }
             }
             "vencido" -> {
                 main.removeCallbacks(payPoll)
                 payQr?.setImageDrawable(null)
-                payMessage("Este QR venció. Tocá USDC o SOL para generar otro.", Pal.warn)
+                payMessage(T("Este QR venció. Tocá USDC o SOL para generar otro."), Pal.warn)
             }
             else -> {
                 val left = ((payExpiresAt - SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)
-                payStatus?.text = "Esperando el pago… (el QR vence en ${left / 60}:${(left % 60).toString().padStart(2, '0')})"
+                payStatus?.text = T("Esperando el pago… (el QR vence en %s)", "${left / 60}:${(left % 60).toString().padStart(2, '0')}")
             }
         }
     }
 
-    private fun soundButtonText(): String = "\uD83D\uDD14  Sonido: ${Sounds.label(this)}"
+    private fun soundButtonText(): String = "\uD83D\uDD14  " + T("Sonido: %s", Sounds.label(this))
 
     private fun refreshTv() {
         val (t, c) = when {
-            !Cfg.configured -> "App sin configurar (faltan RELAY_URL y RELAY_TOKEN)" to Pal.bad
-            RelayState.limit -> "Esta TV no entra: el plan permite ${RelayState.capacity} TV. Tocá el botón de abajo para sumar más." to Pal.warn
-            RelayState.connected && RelayState.tvName.isNotBlank() -> "Conectada como «${RelayState.tvName}» — esperando mensajes" to Pal.ok
-            RelayState.connected -> "Conectada — esperando mensajes" to Pal.ok
-            else -> "Conectando…" to Pal.warn
+            !Cfg.configured -> T("App sin configurar (faltan RELAY_URL y RELAY_TOKEN)") to Pal.bad
+            RelayState.limit -> T("Esta TV no entra: el plan permite %s TV. Tocá el botón de abajo para sumar más.", RelayState.capacity) to Pal.warn
+            RelayState.connected && RelayState.tvName.isNotBlank() -> T("Conectada como «%s» — esperando mensajes", RelayState.tvName) to Pal.ok
+            RelayState.connected -> T("Conectada — esperando mensajes") to Pal.ok
+            else -> T("Conectando…") to Pal.warn
         }
         tvStatus.text = t
         tvDotBg.setColor(c)
 
         tvLast.text = if (RelayState.lastTs > 0) {
-            "Último mensaje: ${RelayState.lastFrom} — ${RelayState.lastText}"
+            T("Último mensaje: %s — %s", RelayState.lastFrom, RelayState.lastText)
         } else {
             ""
         }
@@ -1735,7 +1781,7 @@ class MainActivity : Activity() {
                 Intent(this, RelayService::class.java).setAction(action)
             )
         } catch (e: Exception) {
-            toast("No se pudo mostrar la prueba.")
+            toast(T("No se pudo mostrar la prueba."))
         }
     }
 
@@ -1751,6 +1797,6 @@ class MainActivity : Activity() {
                 return
             } catch (e: Exception) { /* se prueba con la siguiente pantalla */ }
         }
-        toast("Esta TV no tiene esa pantalla. Usá el comando adb de arriba.")
+        toast(T("Esta TV no tiene esa pantalla. Usá el comando adb de arriba."))
     }
 }

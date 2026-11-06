@@ -58,7 +58,7 @@ if (process.env.RESET_STATE === '1') {
 }
 
 const pay = createPay({           // cobro con Solana Pay + licencia (ver pay.js)
-  onPaid: (recibo) => broadcastAviso(recibo.titulo, recibo.texto),
+  onPaid: (recibo) => broadcastAviso(recibo.titulo, recibo.texto, recibo.textos),
 });
 
 let pinFails = 0;
@@ -165,7 +165,7 @@ function sendToTv(t, msg) {
 
 // ---------- avisos del sistema (pago recibido, plan por vencer) ----------
 // Llegan como notificación a los móviles; los que estaban sin conexión los reciben al volver.
-const avisos = [];                // { aid, title, text, ts }
+const avisos = [];                // { aid, title, text, ts, i18n? }  (i18n: { es|en|pt: { titulo, texto } })
 const avisosAcked = new Map();    // uid -> Set de aid ya recibidos
 const MAX_AVISOS = 20;
 const AVISO_AGE_MS = 3 * 24 * 60 * 60 * 1000;
@@ -176,7 +176,7 @@ function loadAvisos() {
     const raw = JSON.parse(fs.readFileSync(avisosFile, 'utf8'));
     for (const a of Array.isArray(raw) ? raw : []) {
       if (a && typeof a.aid === 'string' && typeof a.title === 'string' && typeof a.text === 'string') {
-        avisos.push({ aid: a.aid, title: a.title, text: a.text, ts: Number(a.ts) || Date.now() });
+        avisos.push({ aid: a.aid, title: a.title, text: a.text, ts: Number(a.ts) || Date.now(), i18n: a.i18n || undefined });
       }
     }
   } catch (e) { /* primer arranque */ }
@@ -196,11 +196,11 @@ function saveAvisos() {
 function sendAviso(uid, a) {
   const ws = phones.get(uid);
   if (!isOpen(ws)) return;
-  try { ws.send(JSON.stringify({ type: 'aviso', aid: a.aid, title: a.title, text: a.text, ts: a.ts })); } catch (e) { /* se reenvía al volver */ }
+  try { ws.send(JSON.stringify({ type: 'aviso', aid: a.aid, title: a.title, text: a.text, ts: a.ts, i18n: a.i18n })); } catch (e) { /* se reenvía al volver */ }
 }
 
-function broadcastAviso(title, text) {
-  const a = { aid: crypto.randomUUID(), title, text: String(text).slice(0, 600), ts: Date.now() };
+function broadcastAviso(title, text, i18n) {
+  const a = { aid: crypto.randomUUID(), title, text: String(text).slice(0, 600), ts: Date.now(), i18n: i18n || undefined };
   avisos.push(a);
   while (avisos.length > MAX_AVISOS) avisos.shift();
   saveAvisos();
@@ -209,8 +209,8 @@ function broadcastAviso(title, text) {
 }
 
 // Mensaje a todas las TV, como uno más de la familia (si alguna está apagada, queda en cola)
-function noticeToTvs(text) {
-  const msg = { id: crypto.randomUUID(), uid: '', from: 'Familia TV', text: String(text).slice(0, 500), avatar: undefined, duration: 'larga', color: '', reply: false, ts: Date.now() };
+function noticeToTvs(text, i18n) {
+  const msg = { id: crypto.randomUUID(), uid: '', from: 'Familia TV', text: String(text).slice(0, 500), i18n, avatar: undefined, duration: 'larga', color: '', reply: false, ts: Date.now() };
   for (const t of tvs.values()) {
     t.pending.push(msg);
     if (t.pending.length > MAX_PENDING) t.pending.shift();
@@ -222,8 +222,10 @@ function noticeToTvs(text) {
 function checkReminder() {
   const r = pay.dueReminder();
   if (!r) return;
-  broadcastAviso(r.titulo, r.texto);
-  noticeToTvs(`${r.titulo}\n${r.texto}`);
+  broadcastAviso(r.titulo, r.texto, r.textos);
+  const porIdioma = {};
+  for (const l of Object.keys(r.textos || {})) porIdioma[l] = { texto: `${r.textos[l].titulo}\n${r.textos[l].texto}` };
+  noticeToTvs(`${r.titulo}\n${r.texto}`, porIdioma);
   pay.markReminded(r.until);
 }
 
@@ -260,7 +262,7 @@ function sendFreezeToTv(t) {
   try {
     t.ws.send(JSON.stringify(
       f
-        ? { type: 'freeze', endsIn: f.endsAt - Date.now(), label: f.label, by: f.by }
+        ? { type: 'freeze', endsIn: f.endsAt - Date.now(), label: f.label, lk: f.lk, by: f.by }
         : { type: 'unfreeze' }
     ));
     return true;
@@ -271,7 +273,7 @@ function sendFreezeToTv(t) {
 
 function freezeInfo(t) {
   const f = activeFreeze(t);
-  return f ? { hasta: f.endsAt, ahora: Date.now(), label: f.label, by: f.by } : null;
+  return f ? { hasta: f.endsAt, ahora: Date.now(), label: f.label, lk: f.lk, by: f.by } : null;
 }
 
 // A qué TV va una orden: "tv" ausente o "todas" = todas las vinculadas; si no, esa TV.
@@ -307,7 +309,7 @@ const server = http.createServer(async (req, res) => {
       bloqueo: frozen || null,
       pin: PARENT_PIN !== '',
       plan: planView(),
-      avisos: avisos.map((a) => ({ aid: a.aid, title: a.title, text: a.text, ts: a.ts })), // historial para el móvil
+      avisos: avisos.map((a) => ({ aid: a.aid, title: a.title, text: a.text, ts: a.ts, i18n: a.i18n })), // historial para el móvil
     });
   }
 
@@ -414,11 +416,13 @@ const server = http.createServer(async (req, res) => {
     if (data.action === 'freeze') {
       let endsAt;
       let label;
+      let lk; // la misma etiqueta en forma estructurada: cada app la escribe en su idioma
       if (data.mode === 'until') {
         const hour = Number.isInteger(data.hour) && data.hour >= 0 && data.hour <= 23 ? data.hour : 7;
         const minute = Number.isInteger(data.minute) && data.minute >= 0 && data.minute <= 59 ? data.minute : 0;
         endsAt = nextLocalTime(hour, minute);
         label = `La tele vuelve a las ${hour}:${String(minute).padStart(2, '0')}`;
+        lk = { k: 'until', h: hour, m: minute };
       } else {
         const minutes = Number.isInteger(data.minutes) && data.minutes >= 1 && data.minutes <= MAX_FREEZE_MIN
           ? data.minutes
@@ -427,9 +431,10 @@ const server = http.createServer(async (req, res) => {
         label = minutes >= 60 && minutes % 60 === 0
           ? `Descanso de ${minutes / 60} h`
           : `Descanso de ${minutes} min`;
+        lk = { k: 'rest', min: minutes };
       }
       for (const t of dest) {
-        t.freeze = { endsAt, label, by };
+        t.freeze = { endsAt, label, lk, by };
         sendFreezeToTv(t);
       }
       console.log(`[control] bloqueo (${by}): ${label} -> ${dest.map((t) => `${t.name}${tvOnline(t) ? '' : ' (sin conexión, queda anotado)'}`).join(', ')}`);
