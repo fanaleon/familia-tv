@@ -101,7 +101,10 @@ function createPay(opts = {}) {
   const rpcUrl = (env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com').trim();
   const usdcMint = (env.USDC_MINT || USDC_MAINNET).trim();
   const commitment = env.PAY_COMMITMENT === 'finalized' ? 'finalized' : 'confirmed';
-  const priceUsd = Number(env.PRICE_USD) > 0 ? Number(env.PRICE_USD) : 5;
+  const priceUsd = Number(env.PRICE_USD) > 0 ? Number(env.PRICE_USD) : 5;           // plan: hasta tvBase TV
+  const priceExtraUsd = Number(env.PRICE_EXTRA_USD) > 0 ? Number(env.PRICE_EXTRA_USD) : 8; // cada grupo extra de TV
+  const tvBase = Number(env.TV_BASE) >= 1 ? Math.floor(Number(env.TV_BASE)) : 3;     // TV incluidas en el plan
+  const tvPack = Number(env.TV_PACK) >= 1 ? Math.floor(Number(env.TV_PACK)) : 3;     // TV que suma cada grupo extra
   const licenseDays = Number(env.LICENSE_DAYS) > 0 ? Number(env.LICENSE_DAYS) : 30;
   const trialDays = env.TRIAL_DAYS !== undefined && Number(env.TRIAL_DAYS) >= 0 ? Number(env.TRIAL_DAYS) : 7;
   const requireLicense = ['1', 'true', 'si', 'sí'].includes(String(env.REQUIRE_LICENSE || '').toLowerCase());
@@ -115,13 +118,14 @@ function createPay(opts = {}) {
   if (!enabled) console.error('[pago] PAY_WALLET o USDC_MINT no son claves válidas: los pagos quedan desactivados');
 
   // ----- estado guardado en disco -----
-  let state = { firstSeen: now(), licenseUntil: 0, paid: [] };
+  let state = { firstSeen: now(), licenseUntil: 0, packs: 0, paid: [] };
   try {
     const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     if (raw && typeof raw === 'object') {
       state = {
         firstSeen: Number(raw.firstSeen) || state.firstSeen,
         licenseUntil: Number(raw.licenseUntil) || 0,
+        packs: Number.isInteger(raw.packs) && raw.packs > 0 ? raw.packs : 0,
         paid: Array.isArray(raw.paid) ? raw.paid.slice(-200) : [],
       };
     }
@@ -159,7 +163,17 @@ function createPay(opts = {}) {
       precio_usd: priceUsd,
       dias: licenseDays,
       pagos: enabled,
+      tvs_incluidas: tvBase,
+      tvs_por_grupo: tvPack,
+      grupos_extra: state.packs,
+      capacidad: capacity(),
+      precio_extra_usd: priceExtraUsd,
     };
+  }
+
+  // Cuántas TV se pueden vincular: las del plan + las de cada grupo extra comprado
+  function capacity() {
+    return tvBase + state.packs * tvPack;
   }
 
   // ¿Se puede usar la app? Solo se corta cuando la licencia es obligatoria y ya venció.
@@ -184,6 +198,7 @@ function createPay(opts = {}) {
     return {
       id: p.id,
       metodo: p.method,
+      producto: p.product,
       estado,
       monto: p.amount,
       moneda: p.symbol,
@@ -192,20 +207,23 @@ function createPay(opts = {}) {
     };
   }
 
-  async function create(method) {
+  async function create(method, product) {
     if (!enabled) throw Object.assign(new Error('pagos_desactivados'), { code: 503 });
     if (method !== 'usdc' && method !== 'sol') throw Object.assign(new Error('metodo_invalido'), { code: 400 });
+    if (product === undefined || product === null) product = 'plan';
+    if (product !== 'plan' && product !== 'extra') throw Object.assign(new Error('producto_invalido'), { code: 400 });
     prunePending();
+    const price = product === 'extra' ? priceExtraUsd : priceUsd;
 
     const ref = newReference();
     let amount;
     let expected; // en la unidad mínima (lamports o millonésimas de USDC)
     let url;
     const label = encodeURIComponent('Familia TV');
-    const message = encodeURIComponent('Plan Familia TV');
+    const message = encodeURIComponent(product === 'extra' ? `Familia TV: ${tvPack} TV más` : 'Plan Familia TV');
     if (method === 'usdc') {
-      amount = String(priceUsd);
-      expected = BigInt(Math.round(priceUsd * 1e6));
+      amount = String(price);
+      expected = BigInt(Math.round(price * 1e6));
       url = `solana:${wallet}?amount=${amount}&spl-token=${usdcMint}&reference=${ref}&label=${label}&message=${message}`;
     } else {
       let px;
@@ -214,7 +232,7 @@ function createPay(opts = {}) {
       } catch (e) {
         throw Object.assign(new Error('precio_no_disponible'), { code: 503 });
       }
-      const sol = Math.ceil((priceUsd / px) * 1e4) / 1e4; // se redondea hacia arriba, 4 decimales
+      const sol = Math.ceil((price / px) * 1e4) / 1e4; // se redondea hacia arriba, 4 decimales
       amount = sol.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
       expected = BigInt(Math.round(sol * 1e4)) * 100000n;
       url = `solana:${wallet}?amount=${amount}&reference=${ref}&label=${label}&message=${message}`;
@@ -222,6 +240,7 @@ function createPay(opts = {}) {
     const p = {
       id: crypto.randomUUID(),
       method,
+      product,
       symbol: method === 'usdc' ? 'USDC' : 'SOL',
       ref,
       amount,
@@ -232,7 +251,7 @@ function createPay(opts = {}) {
       estado: 'esperando',
     };
     pending.set(p.id, p);
-    console.log(`[pago] pedido ${method}: ${amount} ${p.symbol}`);
+    console.log(`[pago] pedido ${product} ${method}: ${amount} ${p.symbol}`);
     start();
     return view(p);
   }
@@ -277,14 +296,18 @@ function createPay(opts = {}) {
 
   function accept(p, sig) {
     const t = now();
-    const base = Math.max(t, state.licenseUntil);
-    state.licenseUntil = base + licenseDays * DAY;
-    state.paid.push({ sig, metodo: p.method, monto: p.amount, moneda: p.symbol, at: t });
+    if (p.product === 'extra') {
+      state.packs += 1;
+    } else {
+      const base = Math.max(t, state.licenseUntil);
+      state.licenseUntil = base + licenseDays * DAY;
+    }
+    state.paid.push({ sig, producto: p.product, metodo: p.method, monto: p.amount, moneda: p.symbol, at: t });
     state.paid = state.paid.slice(-200);
     save();
     p.estado = 'pagado';
     p.sig = sig;
-    console.log(`[pago] ¡recibido! ${p.amount} ${p.symbol} (${sig.slice(0, 12)}…) -> licencia hasta ${new Date(state.licenseUntil).toISOString()}`);
+    console.log(`[pago] ¡recibido! ${p.product} ${p.amount} ${p.symbol} (${sig.slice(0, 12)}…) -> capacidad ${capacity()} TV, licencia hasta ${state.licenseUntil ? new Date(state.licenseUntil).toISOString() : '—'}`);
   }
 
   async function check(p) {
@@ -328,7 +351,7 @@ function createPay(opts = {}) {
     timer = null;
   }
 
-  return { create, get, plan, allowed, poll, stop, _state: () => state, enabled, wallet };
+  return { create, get, plan, allowed, capacity, poll, stop, _state: () => state, enabled, wallet };
 }
 
 module.exports = { createPay, b58encode, b58decode, isPubkey, newReference, USDC_MAINNET };
