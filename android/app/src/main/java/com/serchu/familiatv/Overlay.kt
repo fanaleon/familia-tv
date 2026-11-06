@@ -39,7 +39,6 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.ColorUtils
 import kotlin.math.PI
-import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
@@ -97,16 +96,20 @@ object Notifs {
     }
 }
 
-/** Resplandor del color de quien escribe en los bordes de toda la pantalla; el centro queda libre. */
-private class EdgeGlow(context: Context, private val color: Int, private val dim: Int) : View(context) {
+/** Velo oscuro sobre lo que se esté mirando y una luz suave del color de quien escribe detrás de la tarjeta. */
+private class AuraScrim(context: Context, private val color: Int, private val dim: Int) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        val clear = ColorUtils.setAlphaComponent(color, 0)
         paint.shader = RadialGradient(
-            w / 2f, h / 2f, hypot(w.toDouble(), h.toDouble()).toFloat() / 2f,
-            intArrayOf(clear, clear, ColorUtils.setAlphaComponent(color, 0x70), ColorUtils.setAlphaComponent(color, 0xC0)),
-            floatArrayOf(0f, 0.55f, 0.85f, 1f),
+            w / 2f, h / 2f, maxOf(w, h) * 0.6f,
+            intArrayOf(
+                ColorUtils.setAlphaComponent(color, 0x66),
+                ColorUtils.setAlphaComponent(color, 0x30),
+                ColorUtils.setAlphaComponent(color, 0x0C),
+                ColorUtils.setAlphaComponent(color, 0x00)
+            ),
+            floatArrayOf(0f, 0.35f, 0.7f, 1f),
             Shader.TileMode.CLAMP
         )
     }
@@ -338,7 +341,7 @@ class OverlayPresenter(
             type,
             flags,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP }
+        ).apply { gravity = Gravity.CENTER }
     }
 
     private fun buildCard(m: Msg): Built {
@@ -351,18 +354,18 @@ class OverlayPresenter(
         val accent = if (system && m.text.startsWith("⏰")) Pal.warn else (Pal.byKey(m.color) ?: Pal.accent)
         val accentText = lighten(accent, 0.25f)
         val radius = ctx.dp(34)
-        val cardW = minOf(ctx.resources.displayMetrics.widthPixels - ctx.dp(112), ctx.dp(980))
+        val cardW = (ctx.resources.displayMetrics.widthPixels * 0.66f).toInt().coerceIn(ctx.dp(560), ctx.dp(1000))
         val pulses = if (m.needsReply) ValueAnimator.INFINITE else 2   // ondas del avatar: sin parar si espera respuesta
         val running = mutableListOf<ValueAnimator>()
-        // Resplandor en los bordes de toda la pantalla (con un velo oscuro si pide respuesta)
-        val aura = EdgeGlow(ctx, accent, if (m.needsReply) 0x4D000000 else 0).apply { alpha = 0f }
+        // Velo oscuro + luz de color detrás de la tarjeta (más oscuro si pide respuesta)
+        val aura = AuraScrim(ctx, accent, if (m.needsReply) 0x80000000.toInt() else 0x59000000).apply { alpha = 0f }
 
         val outer = KeyFrame(ctx) { answer("sin_respuesta", null) }.apply {
-            setPadding(ctx.dp(48), ctx.dp(30), ctx.dp(48), ctx.dp(22))
+            setPadding(ctx.dp(48), ctx.dp(40), ctx.dp(48), ctx.dp(40))
             clipChildren = false
             clipToPadding = false
             alpha = 0f
-            translationY = -ctx.dp(80).toFloat()
+            translationY = ctx.dp(70).toFloat()
             scaleX = 0.95f
             scaleY = 0.95f
         }
@@ -375,20 +378,18 @@ class OverlayPresenter(
         fun halo(margin: Int, alpha: Int): View = View(ctx).apply {
             background = roundedBg(withAlpha(accent, alpha), radius + ctx.dp(margin))
         }
-        fun haloParams(margin: Int) = FrameLayout.LayoutParams(match, match).apply {
-            setMargins(-ctx.dp(margin), -ctx.dp(margin), -ctx.dp(margin), -ctx.dp(margin))
-        }
+        // Empiezan sin tamaño y se ajustan a la tarjeta cuando ya se midió: si no, miden toda la pantalla
         val halo2 = halo(16, 0x1C)
         val halo1 = halo(7, 0x30)
-        stack.addView(halo2, haloParams(16))
-        stack.addView(halo1, haloParams(7))
+        stack.addView(halo2, FrameLayout.LayoutParams(0, 0))
+        stack.addView(halo1, FrameLayout.LayoutParams(0, 0))
 
         // Tarjeta: degradé oscuro teñido con el color elegido, borde de color, esquinas recortadas
         val tint = ColorUtils.blendARGB(0xFF181A38.toInt(), accent, 0.22f)
         val cardFrame = FrameLayout(ctx).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(withAlpha(tint, 0xF4), 0xF41B1D3C.toInt(), 0xF4121429.toInt())
+                intArrayOf(withAlpha(tint, 0xFC), 0xFC1B1D3C.toInt(), 0xFC121429.toInt())
             ).apply {
                 cornerRadius = radius.toFloat()
                 setStroke(ctx.dp(2), withAlpha(accent, 0xAA))
@@ -580,6 +581,20 @@ class OverlayPresenter(
         cardFrame.addView(sheen, FrameLayout.LayoutParams(ctx.dp(200), match))
 
         stack.addView(cardFrame, FrameLayout.LayoutParams(match, wrap))
+        cardFrame.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+            val w = r - l
+            val h = b - t
+            listOf(halo2 to 16, halo1 to 7).forEach { (v, mg) ->
+                val px = ctx.dp(mg)
+                val lp = v.layoutParams as FrameLayout.LayoutParams
+                if (lp.width != w + 2 * px || lp.height != h + 2 * px) {
+                    lp.width = w + 2 * px
+                    lp.height = h + 2 * px
+                    lp.setMargins(-px, -px, -px, -px)
+                    v.layoutParams = lp
+                }
+            }
+        }
         outer.addView(stack, FrameLayout.LayoutParams(cardW, wrap, Gravity.CENTER_HORIZONTAL))
 
         val intro = Runnable {
