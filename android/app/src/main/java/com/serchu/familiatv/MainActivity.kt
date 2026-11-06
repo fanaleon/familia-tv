@@ -1762,6 +1762,12 @@ class MainActivity : Activity() {
         tvStatus.text = t
         tvDotBg.setColor(c)
 
+        // El último mensaje se muestra solo 5 minutos; después se borra de la memoria
+        if (RelayState.lastTs > 0 && System.currentTimeMillis() - RelayState.lastTs > RelayState.MSG_TTL_MS) {
+            RelayState.lastFrom = ""
+            RelayState.lastText = ""
+            RelayState.lastTs = 0L
+        }
         tvLast.text = if (RelayState.lastTs > 0) {
             T("Último mensaje: %s — %s", RelayState.lastFrom, RelayState.lastText)
         } else {

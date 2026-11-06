@@ -9,7 +9,12 @@
 //      en SOL). Cada transacción se acepta una sola vez.
 //   4. Con el pago confirmado se extiende la licencia (30 días por defecto). Todo se guarda en un
 //      archivo (DATA_DIR) para que sobreviva a los reinicios del servidor.
-// No hace falta ninguna librería de Solana: solo el JSON-RPC público.
+//
+// SDK oficial: el link, la búsqueda por referencia y la validación del pago usan @solana/pay (Solana
+// Foundation) a través de ./solanapay.js. Si el SDK no está instalado o falla, se usa la verificación
+// manual de siempre (JSON-RPC público), que además sirve de red de seguridad: por ejemplo, si una billetera
+// agrega instrucciones extra después de la transferencia, el SDK la rechaza pero el saldo sí llegó.
+// Se puede desactivar con PAY_SDK=0.
 //
 // Robustez: la RPC pública limita los pedidos (error 429). Por eso se aceptan varias RPC separadas por
 // coma en SOLANA_RPC_URL (si una falla se prueba la siguiente), se espera más entre intentos cuando
@@ -132,6 +137,25 @@ function createPay(opts = {}) {
   const enabled = isPubkey(wallet) && isPubkey(usdcMint);
   if (!enabled) console.error('[pago] PAY_WALLET o USDC_MINT no son claves válidas: los pagos quedan desactivados');
 
+  // ----- SDK oficial de Solana Pay (opcional, con respaldo manual) -----
+  // opts.sdk permite inyectarlo (pruebas); null = forzar el modo manual.
+  let sdk = null;
+  let sdkReady;
+  if (opts.sdk !== undefined) {
+    sdk = opts.sdk;
+    sdkReady = Promise.resolve();
+  } else if (String(env.PAY_SDK || '1') === '0') {
+    sdkReady = Promise.resolve();
+  } else {
+    sdkReady = require('./solanapay').load().then((s) => {
+      sdk = s;
+      console.log('[pago] Solana Pay: SDK oficial (@solana/pay) activo');
+    }).catch((e) => {
+      console.log(`[pago] Solana Pay: SDK oficial no disponible (${String(e && e.message).split('\n')[0]}); se usa la verificación manual`);
+    });
+  }
+  let sdkWarned = 0;
+
   // ----- estado guardado en disco -----
   let state = { firstSeen: now(), licenseUntil: 0, packs: 0, remindedFor: 0, lastReceipt: null, paid: [] };
   try {
@@ -252,6 +276,7 @@ function createPay(opts = {}) {
   }
 
   async function create(method, product) {
+    await sdkReady;
     if (!enabled) throw Object.assign(new Error('pagos_desactivados'), { code: 503 });
     if (method !== 'usdc' && method !== 'sol') throw Object.assign(new Error('metodo_invalido'), { code: 400 });
     if (product === undefined || product === null) product = 'plan';
@@ -267,12 +292,25 @@ function createPay(opts = {}) {
     let amount;
     let expected; // en la unidad mínima (lamports o millonésimas de USDC)
     let url;
-    const label = encodeURIComponent('Familia TV');
-    const message = encodeURIComponent(product === 'extra' ? `Familia TV: ${tvPack} TV más` : 'Plan Familia TV');
+    const labelText = 'Familia TV';
+    const messageText = product === 'extra' ? `Familia TV: ${tvPack} TV más` : 'Plan Familia TV';
+    // El link de pago: con el SDK oficial si está; si no (o si falla), armado a mano
+    const buildUrl = (amountStr, splToken) => {
+      if (sdk) {
+        try {
+          return sdk.encodeURL({ recipient: wallet, amount: Number(amountStr), splToken, reference: ref, label: labelText, message: messageText });
+        } catch (e) {
+          console.error('[pago] el SDK no pudo armar el link, lo armo a mano:', e.message);
+        }
+      }
+      const lab = encodeURIComponent(labelText);
+      const msg = encodeURIComponent(messageText);
+      return `solana:${wallet}?amount=${amountStr}${splToken ? '&spl-token=' + splToken : ''}&reference=${ref}&label=${lab}&message=${msg}`;
+    };
     if (method === 'usdc') {
       amount = String(price);
       expected = BigInt(Math.round(price * 1e6));
-      url = `solana:${wallet}?amount=${amount}&spl-token=${usdcMint}&reference=${ref}&label=${label}&message=${message}`;
+      url = buildUrl(amount, usdcMint);
     } else {
       let px;
       try {
@@ -283,7 +321,7 @@ function createPay(opts = {}) {
       const sol = Math.ceil((price / px) * 1e4) / 1e4; // se redondea hacia arriba, 4 decimales
       amount = sol.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
       expected = BigInt(Math.round(sol * 1e4)) * 100000n;
-      url = `solana:${wallet}?amount=${amount}&reference=${ref}&label=${label}&message=${message}`;
+      url = buildUrl(amount, undefined);
     }
     const p = {
       id: crypto.randomUUID(),
@@ -475,7 +513,73 @@ function createPay(opts = {}) {
     console.log(`[pago] ¡recibido! ${p.product} ${p.amount} ${p.symbol} (${sig.slice(0, 12)}…) -> capacidad ${capacity()} TV, licencia hasta ${state.licenseUntil ? new Date(state.licenseUntil).toISOString() : '—'}`);
   }
 
+  // Con el SDK: prueba cada RPC en orden (como rpc()); un "no es el pago" del SDK no cuenta como fallo de red
+  async function sdkCall(fn) {
+    let lastErr;
+    for (let k = 0; k < rpcUrls.length; k++) {
+      const idx = (rpcIdx + k) % rpcUrls.length;
+      try {
+        const out = await fn(rpcUrls[idx]);
+        rpcIdx = idx;
+        return out;
+      } catch (e) {
+        if (sdk.isDomainError(e)) throw e;
+        lastErr = e;
+      }
+    }
+    throw lastErr;
+  }
+
+  // Revisa el pedido con el SDK: findReference (la más antigua nueva) + validateTransfer.
+  // p.cursor es la última firma ya descartada; con "until" findReference sigue desde la siguiente.
+  async function checkSdk(p) {
+    for (let i = 0; i < 5; i++) {
+      let found;
+      try {
+        found = await sdkCall((u) => sdk.findReference(u, p.ref, { limit: 10, commitment, ...(p.cursor ? { until: p.cursor } : {}) }));
+      } catch (e) {
+        if (sdk.isDomainError(e)) return false; // todavía no hay transacciones con esa referencia
+        throw e;
+      }
+      const sig = String(found.signature);
+      if (found.err || used().has(sig)) { p.cursor = sig; continue; }
+      const fields = { recipient: wallet, amount: Number(p.amount), reference: p.ref, ...(p.method === 'usdc' ? { splToken: usdcMint } : {}) };
+      try {
+        await sdkCall((u) => sdk.validateTransfer(u, sig, fields, { commitment }));
+        accept(p, sig);
+        return true;
+      } catch (e) {
+        if (!sdk.isDomainError(e)) throw e;
+        // El SDK es estricto con la forma de la transacción. Antes de descartarla se comprueba por saldo
+        // (puede que la billetera haya agregado instrucciones extra, o que la transacción aún no esté lista).
+        const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', commitment, maxSupportedTransactionVersion: 0 }]);
+        if (!tx) return false; // todavía no está disponible: se vuelve a mirar sin avanzar
+        if (paidEnough(tx, p)) {
+          console.log(`[pago] el SDK no la validó (${String(e.message).slice(0, 60)}), pero el saldo llegó: se acepta`);
+          accept(p, sig);
+          return true;
+        }
+        p.cursor = sig; // llegó, pero no alcanza (o no es a nuestra billetera)
+      }
+    }
+    return false;
+  }
+
   async function check(p) {
+    if (sdk) {
+      try {
+        return await checkSdk(p);
+      } catch (e) {
+        if (now() - sdkWarned > 60000) {
+          sdkWarned = now();
+          console.error(`[pago] el SDK falló (${e.message}); pruebo con la verificación manual`);
+        }
+      }
+    }
+    return checkManual(p);
+  }
+
+  async function checkManual(p) {
     const sigs = await rpc('getSignaturesForAddress', [p.ref, { limit: 5, commitment }]);
     for (const s of sigs || []) {
       if (s.err || used().has(s.signature) || (p.rejected && p.rejected.has(s.signature))) continue;
@@ -614,7 +718,7 @@ function createPay(opts = {}) {
   // Si el servidor se reinició con pagos pendientes, se retoma la vigilancia
   if ([...pending.values()].some((p) => p.estado === 'esperando')) setImmediate(() => start());
 
-  return { create, get, plan, allowed, capacity, poll, stop, dueReminder, markReminded, lastReceipt: () => state.lastReceipt, _state: () => state, enabled, wallet };
+  return { create, get, plan, allowed, capacity, poll, stop, dueReminder, markReminded, lastReceipt: () => state.lastReceipt, _state: () => state, enabled, wallet, sdkName: () => (sdk ? sdk.name || 'sdk' : 'manual'), ready: () => sdkReady };
 }
 
 module.exports = { createPay, b58encode, b58decode, isPubkey, newReference, USDC_MAINNET };

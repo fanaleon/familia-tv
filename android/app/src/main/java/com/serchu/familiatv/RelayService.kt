@@ -133,7 +133,7 @@ class RelayService : Service() {
         main.post {
             RelayState.lastFrom = msg.from
             RelayState.lastText = msg.text
-            RelayState.lastTs = msg.ts
+            RelayState.lastTs = System.currentTimeMillis() // hora local de llegada
             presenter.show(msg)
         }
     }
