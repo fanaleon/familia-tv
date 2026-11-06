@@ -160,6 +160,29 @@ const avisos = [];                // { aid, title, text, ts }
 const avisosAcked = new Map();    // uid -> Set de aid ya recibidos
 const MAX_AVISOS = 20;
 const AVISO_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const avisosFile = path.join(path.dirname(tvsFile), 'avisos.json');
+
+function loadAvisos() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(avisosFile, 'utf8'));
+    for (const a of Array.isArray(raw) ? raw : []) {
+      if (a && typeof a.aid === 'string' && typeof a.title === 'string' && typeof a.text === 'string') {
+        avisos.push({ aid: a.aid, title: a.title, text: a.text, ts: Number(a.ts) || Date.now() });
+      }
+    }
+  } catch (e) { /* primer arranque */ }
+}
+
+function saveAvisos() {
+  try {
+    fs.mkdirSync(path.dirname(avisosFile), { recursive: true });
+    const tmp = avisosFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(avisos));
+    fs.renameSync(tmp, avisosFile);
+  } catch (e) {
+    console.error('[aviso] no se pudo guardar:', e.message);
+  }
+}
 
 function sendAviso(uid, a) {
   const ws = phones.get(uid);
@@ -171,6 +194,7 @@ function broadcastAviso(title, text) {
   const a = { aid: crypto.randomUUID(), title, text: String(text).slice(0, 600), ts: Date.now() };
   avisos.push(a);
   while (avisos.length > MAX_AVISOS) avisos.shift();
+  saveAvisos();
   for (const uid of phones.keys()) sendAviso(uid, a);
   console.log(`[aviso] ${title}`);
 }
@@ -274,6 +298,7 @@ const server = http.createServer(async (req, res) => {
       bloqueo: frozen || null,
       pin: PARENT_PIN !== '',
       plan: planView(),
+      avisos: avisos.map((a) => ({ aid: a.aid, title: a.title, text: a.text, ts: a.ts })), // historial para el móvil
     });
   }
 
@@ -631,6 +656,7 @@ setInterval(() => {
 }, 30000);
 
 loadTvs();
+loadAvisos();
 setInterval(checkReminder, 10 * 60 * 1000);
 setTimeout(checkReminder, 20 * 1000);
 server.listen(PORT, () => console.log(`Relay escuchando en :${PORT}`));
