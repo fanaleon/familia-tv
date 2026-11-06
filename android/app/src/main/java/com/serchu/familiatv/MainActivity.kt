@@ -150,6 +150,7 @@ class MainActivity : Activity() {
     private var payProduct = "plan"   // "plan" o "extra" (+3 TV)
     private var payMethod = "usdc"
     private var payWhat: TextView? = null
+    private var payBaseline = 0L      // hora (del servidor) del último pago al abrir este QR: uno más nuevo es de esta pantalla
     private var planCache: JSONObject? = null
 
     private val phonePoll: Runnable = object : Runnable {
@@ -209,6 +210,11 @@ class MainActivity : Activity() {
         } else {
             main.post(phonePoll)
             main.post(phoneTick)
+        }
+        // Si la pantalla de pago quedó abierta (protector de pantalla, otra app encima), se retoma la consulta
+        if (payOverlay != null && !payDone && payId != null) {
+            main.removeCallbacks(payPoll)
+            main.post(payPoll)
         }
     }
 
@@ -1617,6 +1623,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     val pago = o?.optJSONObject("pago")
                     if (code in 200..299 && pago != null) {
+                        payBaseline = o?.optJSONObject("ultimo_pago")?.optLong("at", 0L) ?: 0L
                         showPayRequest(pago)
                     } else {
                         when (o?.optString("error")) {
@@ -1663,7 +1670,10 @@ class MainActivity : Activity() {
     private fun onPayStatus(id: String, o: JSONObject) {
         if (payOverlay == null || id != payId || payDone) return
         o.optJSONObject("plan")?.let { showPlan(it) }
-        when (o.optJSONObject("pago")?.optString("estado")) {
+        // Cualquier pago recibido después de generar este QR cuenta, aunque el servidor lo haya asignado a otro pedido
+        val last = o.optJSONObject("ultimo_pago")
+        val newer = last != null && last.optLong("at", 0L) > payBaseline
+        when (if (newer) "pagado" else o.optJSONObject("pago")?.optString("estado")) {
             "pagado" -> {
                 payDone = true
                 main.removeCallbacks(payPoll)
@@ -1672,7 +1682,7 @@ class MainActivity : Activity() {
                 val fecha = if (hasta > 0) SimpleDateFormat("d 'de' MMMM", Locale("es")).format(Date(hasta)) else ""
                 payQr?.setImageDrawable(null)
                 payAmount?.text = "✅  ¡Pago recibido!"
-                val recibo = o.optJSONObject("pago")?.optJSONObject("recibo")?.optString("texto").orEmpty()
+                val recibo = (if (newer) last?.optString("texto") else o.optJSONObject("pago")?.optJSONObject("recibo")?.optString("texto")).orEmpty()
                 if (recibo.isNotBlank()) {
                     payMessage(recibo, Pal.ok)
                 } else if (o.optJSONObject("pago")?.optString("producto") == "extra") {

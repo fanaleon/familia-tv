@@ -305,7 +305,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/pay/status') {
     const id = url.searchParams.get('id');
     const pago = id ? pay.get(id) : null;
-    return json(res, 200, { ok: true, plan: planView(), pago });
+    return json(res, 200, { ok: true, plan: planView(), pago, ultimo_pago: pay.lastReceipt() });
   }
 
   if (req.method === 'POST' && url.pathname === '/pay/create') {
@@ -317,7 +317,7 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const pago = await pay.create(data && data.metodo, data && data.producto);
-      return json(res, 200, { ok: true, plan: planView(), pago });
+      return json(res, 200, { ok: true, plan: planView(), pago, ultimo_pago: pay.lastReceipt() });
     } catch (e) {
       return json(res, e.code || 500, { ok: false, error: e.message });
     }
