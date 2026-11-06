@@ -65,7 +65,7 @@ object Notifs {
     }
 
     /** Notificación común con sonido; al tocarla abre la app. */
-    fun post(ctx: Context, notifId: Int, title: String, text: String) {
+    fun post(ctx: Context, notifId: Int, title: String, text: String, timeoutMs: Long = 0L) {
         ensureChannels(ctx)
         val open = PendingIntent.getActivity(
             ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
@@ -79,6 +79,7 @@ object Notifs {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .apply { if (timeoutMs > 0) setTimeoutAfter(timeoutMs) } // desaparece sola
             .build()
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(notifId, n)
     }

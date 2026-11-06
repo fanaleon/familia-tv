@@ -30,6 +30,9 @@ import java.util.concurrent.TimeUnit
 
 /** Estado compartido entre el servicio y la pantalla de la TV. */
 object RelayState {
+    /** Los mensajes (y sus respuestas) no se conservan más de 5 minutos, ni acá ni en el servidor. */
+    const val MSG_TTL_MS = 5 * 60 * 1000L
+
     @Volatile var connected: Boolean = false
     @Volatile var lastFrom: String = ""
     @Volatile var lastText: String = ""
@@ -326,14 +329,21 @@ object Inbox {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("inbox", Context.MODE_PRIVATE)
 
+    /** Las respuestas de la TV ("Respondieron: OK…") duran 5 minutos; los avisos de pago y de plan se conservan. */
+    private fun expired(it: Item, now: Long) = it.aid.startsWith("reply-") && now - it.ts > RelayState.MSG_TTL_MS
+
     @Synchronized
     fun items(ctx: Context): List<Item> {
         val raw = prefs(ctx).getString("items", "[]") ?: "[]"
         val arr = runCatching { org.json.JSONArray(raw) }.getOrDefault(org.json.JSONArray())
-        return (0 until arr.length()).mapNotNull { i ->
+        val now = System.currentTimeMillis()
+        val all = (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             Item(o.optString("aid"), o.optString("title"), o.optString("text"), o.optLong("ts"), o.optBoolean("n"))
         }
+        val keep = all.filterNot { expired(it, now) }
+        if (keep.size != all.size) save(ctx, keep) // se borran del teléfono
+        return keep
     }
 
     private fun save(ctx: Context, list: List<Item>) {

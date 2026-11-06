@@ -33,7 +33,8 @@ const MAX_AVATAR = 40000;        // caracteres base64 de la foto (~30 KB)
 const MAX_PENDING = 50;          // mensajes en cola por TV si está apagada
 const MAX_REPLIES = 20;          // respuestas en cola por persona si su móvil está sin conexión
 const MAX_REPLY_QUEUES = 100;    // personas distintas con respuestas en cola
-const MAX_AGE_MS = 24 * 60 * 60 * 1000; // lo que pasa de 24 h en cola se descarta
+// Los mensajes y las respuestas no se guardan más de 5 minutos (MSG_TTL_MIN): lo que pasa de ahí en cola se descarta.
+const MAX_AGE_MS = (Number(process.env.MSG_TTL_MIN) > 0 ? Number(process.env.MSG_TTL_MIN) : 5) * 60 * 1000;
 const CHOICES = new Set(['ok', 'voy', 'ahora_no', 'sin_respuesta']);
 const COLORS = new Set(['azul', 'rosa', 'verde', 'amarillo']);
 const MAX_FREEZE_MIN = 12 * 60;  // el bloqueo más largo que se puede pedir por minutos
@@ -160,6 +161,8 @@ function prune() {
     else replies.delete(uid);
   }
 }
+
+setInterval(prune, 30 * 1000); // las colas se vacían solas aunque no pase nada
 
 function sendToTv(t, msg) {
   if (!tvOnline(t)) return false;
@@ -509,7 +512,7 @@ const server = http.createServer(async (req, res) => {
     const entregadas = dest.filter((t) => sendToTv(t, msg)).length;
     const delivered = entregadas > 0;
     const enCola = dest.length - entregadas;
-    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.slice(0, 60)} -> ${dest.map((t) => t.name).join(', ')} (${entregadas} ahora, ${enCola} en cola)`);
+    console.log(`[send] ${msg.from}${msg.reply ? ' (pide respuesta)' : ''}: ${msg.text.length} caracteres -> ${dest.map((t) => t.name).join(', ')} (${entregadas} ahora, ${enCola} en cola)`);
     return json(res, 200, { ok: true, id: msg.id, delivered, queued: enCola > 0, entregadas, en_cola: enCola, total: dest.length });
   }
 

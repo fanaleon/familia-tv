@@ -89,7 +89,7 @@ class PhoneService : Service() {
             else -> return
         }
         Inbox.add(this, "reply-$rid", title, text, System.currentTimeMillis(), notified = true)
-        Notifs.post(this, rid.hashCode(), title, text)
+        Notifs.post(this, rid.hashCode(), title, text, RelayState.MSG_TTL_MS)
     }
 
     private fun buildNotification(text: String): Notification {
