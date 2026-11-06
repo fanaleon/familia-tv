@@ -13,7 +13,7 @@ object Cfg {
 
     val token: String = BuildConfig.RELAY_TOKEN.trim()
 
-    val senderName: String = BuildConfig.SENDER_NAME.trim().ifBlank { "Familia" }
+    val senderName: String = BuildConfig.SENDER_NAME.trim().ifBlank { "Family" }
 
     val configured: Boolean =
         base.toHttpUrlOrNull() != null &&

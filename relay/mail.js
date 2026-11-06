@@ -2,7 +2,7 @@
 //   - RESEND_API_KEY: clave de Resend (https://resend.com). No necesita librerías.
 //   - OWNER_EMAIL: dirección que recibe los avisos. Si falta, no se manda nada.
 //   - OWNER_LANG: idioma del mail (es, en o pt; por defecto es).
-//   - MAIL_FROM: remitente. Por defecto "Familia TV <onboarding@resend.dev>", que Resend solo deja mandar a la
+//   - MAIL_FROM: remitente. Por defecto "Hey Family <onboarding@resend.dev>", que Resend solo deja mandar a la
 //     dirección con la que se creó la cuenta; para otras direcciones hay que verificar un dominio.
 //   - MAIL_TEST=1: manda un mail de prueba al arrancar (sacar la variable después).
 const EMAIL_RE = /^[^\s@<>"',;]{1,64}@[^\s@<>"',;]{1,190}\.[A-Za-z]{2,}$/;
@@ -11,27 +11,27 @@ const LANGS = ['es', 'en', 'pt'];
 const L = {
   es: {
     title: 'Nueva compra',
-    intro: 'Alguien acaba de comprar Familia TV.',
+    intro: 'Alguien acaba de comprar Hey Family.',
     labels: { amount: 'Monto', product: 'Compra', usd: 'Valor', network: 'Red', tx: 'Transacción', expires: 'Plan hasta', cap: 'TV habilitadas' },
-    plan: 'Plan Familia TV', extra: 'TV adicionales', test: 'Mail de prueba',
-    testText: 'Este es un mail de prueba: acá te van a llegar los avisos de cada compra de Familia TV.',
-    foot: 'Aviso automático de Familia TV.',
+    plan: 'Plan Hey Family', extra: 'TV adicionales', test: 'Mail de prueba',
+    testText: 'Este es un mail de prueba: acá te van a llegar los avisos de cada compra de Hey Family.',
+    foot: 'Aviso automático de Hey Family.',
   },
   en: {
     title: 'New purchase',
-    intro: 'Someone just bought Familia TV.',
+    intro: 'Someone just bought Hey Family.',
     labels: { amount: 'Amount', product: 'Purchase', usd: 'Value', network: 'Network', tx: 'Transaction', expires: 'Plan until', cap: 'TVs allowed' },
-    plan: 'Familia TV plan', extra: 'Extra TVs', test: 'Test email',
-    testText: 'This is a test email: alerts for every Familia TV purchase will arrive here.',
-    foot: 'Automatic message from Familia TV.',
+    plan: 'Hey Family plan', extra: 'Extra TVs', test: 'Test email',
+    testText: 'This is a test email: alerts for every Hey Family purchase will arrive here.',
+    foot: 'Automatic message from Hey Family.',
   },
   pt: {
     title: 'Nova compra',
-    intro: 'Alguém acabou de comprar o Familia TV.',
+    intro: 'Alguém acabou de comprar o Hey Family.',
     labels: { amount: 'Valor pago', product: 'Compra', usd: 'Valor', network: 'Rede', tx: 'Transação', expires: 'Plano até', cap: 'TVs liberadas' },
-    plan: 'Plano Familia TV', extra: 'TVs adicionais', test: 'E-mail de teste',
-    testText: 'Este é um e-mail de teste: os avisos de cada compra do Familia TV chegarão aqui.',
-    foot: 'Aviso automático do Familia TV.',
+    plan: 'Plano Hey Family', extra: 'TVs adicionais', test: 'E-mail de teste',
+    testText: 'Este é um e-mail de teste: os avisos de cada compra do Hey Family chegarão aqui.',
+    foot: 'Aviso automático do Hey Family.',
   },
 };
 
@@ -41,7 +41,7 @@ function createMail(opts = {}) {
   const env = opts.env || process.env;
   const doFetch = opts.fetch || globalThis.fetch;
   const apiKey = String(env.RESEND_API_KEY || '').trim();
-  const from = String(env.MAIL_FROM || 'Familia TV <onboarding@resend.dev>').trim();
+  const from = String(env.MAIL_FROM || 'Hey Family <onboarding@resend.dev>').trim();
   const owner = String(env.OWNER_EMAIL || '').trim();
   const state = {
     to: EMAIL_RE.test(owner) && owner.length <= 254 ? owner : '',
@@ -131,7 +131,7 @@ ${linesHtml}
 
   async function sendTest() {
     const l = L[state.lang || 'es'];
-    return send(`📺 Familia TV · ${l.test}`, page(l.test, [l.testText], [], l.foot), `${l.testText}\n\n${l.foot}`);
+    return send(`📺 Hey Family · ${l.test}`, page(l.test, [l.testText], [], l.foot), `${l.testText}\n\n${l.foot}`);
   }
 
   return { view, notifyPayment, sendTest, enabled: () => !!(apiKey && state.to) };

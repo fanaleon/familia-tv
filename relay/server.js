@@ -1,4 +1,4 @@
-// Relay Familia TV
+// Relay Hey Family
 //   POST /send                         (móvil) -> guarda el mensaje y lo empuja a la(s) TV  { tv?: id }
 //   GET  /status                       (móvil) -> { tv, tvs[], capacidad, pendientes, bloqueo, pin, plan }
 //   POST /control                      (móvil) -> bloquea / desbloquea una TV o todas (PIN opcional)
@@ -221,7 +221,7 @@ function broadcastAviso(title, text, i18n) {
 
 // Mensaje a todas las TV, como uno más de la familia (si alguna está apagada, queda en cola)
 function noticeToTvs(text, i18n) {
-  const msg = { id: crypto.randomUUID(), uid: '', from: 'Familia TV', text: String(text).slice(0, 500), i18n, avatar: undefined, duration: 'larga', color: '', reply: false, ts: Date.now() };
+  const msg = { id: crypto.randomUUID(), uid: '', from: 'Hey Family', text: String(text).slice(0, 500), i18n, avatar: undefined, duration: 'larga', color: '', reply: false, ts: Date.now() };
   for (const t of tvs.values()) {
     t.pending.push(msg);
     if (t.pending.length > MAX_PENDING) t.pending.shift();
@@ -471,7 +471,7 @@ const server = http.createServer(async (req, res) => {
     if (dest.length === 0) return json(res, 409, { ok: false, error: 'sin_tvs' });
 
     const text = typeof data.text === 'string' ? data.text.trim() : '';
-    const from = (typeof data.from === 'string' ? data.from.trim() : '') || 'Familia';
+    const from = (typeof data.from === 'string' ? data.from.trim() : '') || 'Family';
     if (!text) return json(res, 400, { ok: false, error: 'mensaje_vacio' });
     if (text.length > MAX_TEXT) return json(res, 400, { ok: false, error: 'mensaje_muy_largo' });
 

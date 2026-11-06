@@ -20,7 +20,7 @@
         android:allowBackup="false"
         android:banner="@drawable/banner"
         android:icon="@drawable/ic_launcher"
-        android:label="Familia TV"
+        android:label="Hey Family"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 

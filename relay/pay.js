@@ -292,8 +292,8 @@ function createPay(opts = {}) {
     let amount;
     let expected; // en la unidad mínima (lamports o millonésimas de USDC)
     let url;
-    const labelText = 'Familia TV';
-    const messageText = product === 'extra' ? `Familia TV: ${tvPack} TV más` : 'Plan Familia TV';
+    const labelText = 'Hey Family';
+    const messageText = product === 'extra' ? `Hey Family: ${tvPack} TV más` : 'Plan Hey Family';
     // El link de pago: con el SDK oficial si está; si no (o si falla), armado a mano
     const buildUrl = (amountStr, splToken) => {
       if (sdk) {
@@ -416,11 +416,11 @@ function createPay(opts = {}) {
       whatExtra: (n) => `${n} TV más`,
       whatPlan: 'plan',
       extra: (cap) => `Ya podés vincular hasta ${cap} TV.`,
-      plan: (cap, days) => `Plan Familia TV: hasta ${cap} TV, ${days} días.`,
+      plan: (cap, days) => `Plan Hey Family: hasta ${cap} TV, ${days} días.`,
       expires: (d) => `Vence el ${d}.`,
       remind: (n, d) => `Te aviso ${n} días antes (el ${d}).`,
       trial: (d) => `Seguís en la prueba, que termina el ${d}: activá el plan antes.`,
-      remTitle: '⏰ Tu plan de Familia TV está por vencer',
+      remTitle: '⏰ Tu plan de Hey Family está por vencer',
       remText: (d, n) => `Vence el ${d} (en ${n} ${n === 1 ? 'día' : 'días'}). Para renovarlo, abrí «Plan» en la tele y pagá desde el QR.`,
     },
     en: {
@@ -429,11 +429,11 @@ function createPay(opts = {}) {
       whatExtra: (n) => `${n} more TVs`,
       whatPlan: 'plan',
       extra: (cap) => `You can now link up to ${cap} TVs.`,
-      plan: (cap, days) => `Familia TV plan: up to ${cap} TVs, ${days} days.`,
+      plan: (cap, days) => `Hey Family plan: up to ${cap} TVs, ${days} days.`,
       expires: (d) => `Expires on ${d}.`,
       remind: (n, d) => `I'll remind you ${n} days before (on ${d}).`,
       trial: (d) => `You're still on the trial, which ends on ${d}: activate the plan before then.`,
-      remTitle: '⏰ Your Familia TV plan is about to expire',
+      remTitle: '⏰ Your Hey Family plan is about to expire',
       remText: (d, n) => `It expires on ${d} (in ${n} ${n === 1 ? 'day' : 'days'}). To renew it, open "Plan" on the TV and pay with the QR.`,
     },
     pt: {
@@ -442,11 +442,11 @@ function createPay(opts = {}) {
       whatExtra: (n) => `mais ${n} TVs`,
       whatPlan: 'plano',
       extra: (cap) => `Agora você pode vincular até ${cap} TVs.`,
-      plan: (cap, days) => `Plano Familia TV: até ${cap} TVs, ${days} dias.`,
+      plan: (cap, days) => `Plano Hey Family: até ${cap} TVs, ${days} dias.`,
       expires: (d) => `Vence em ${d}.`,
       remind: (n, d) => `Aviso você ${n} dias antes (em ${d}).`,
       trial: (d) => `Você continua no teste, que termina em ${d}: ative o plano antes.`,
-      remTitle: '⏰ Seu plano do Familia TV está para vencer',
+      remTitle: '⏰ Seu plano do Hey Family está para vencer',
       remText: (d, n) => `Vence em ${d} (em ${n} ${n === 1 ? 'dia' : 'dias'}). Para renovar, abra «Plano» na TV e pague pelo QR.`,
     },
   };

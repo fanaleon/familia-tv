@@ -122,7 +122,7 @@ class RelayService : Service() {
         val msg = Msg(
             id = id,
             uid = o.optString("uid"),
-            from = o.optString("from", "Familia").ifBlank { "Familia" },
+            from = o.optString("from", "Family").ifBlank { "Family" },
             text = body,
             ts = o.optLong("ts", System.currentTimeMillis()),
             avatar = o.optString("avatar").takeIf { it.isNotBlank() },
@@ -184,7 +184,7 @@ class RelayService : Service() {
         )
         return NotificationCompat.Builder(this, Notifs.CH_SERVICE)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle("Familia TV")
+            .setContentTitle("Hey Family")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)

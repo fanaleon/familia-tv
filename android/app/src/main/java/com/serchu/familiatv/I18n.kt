@@ -10,20 +10,17 @@ import java.util.Locale
  * El idioma se elige al abrir la app por primera vez y se cambia desde el botón del globo.
  */
 object Lang {
-    val all = listOf("es" to "Español", "en" to "English", "pt" to "Português")
+    val all = listOf("en" to "English", "es" to "Español", "pt" to "Português")
 
-    @Volatile var code: String = "es"
+    @Volatile var code: String = "en"
         private set
 
     val locale: Locale get() = Locale(code)
 
     private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("lang", Context.MODE_PRIVATE)
 
-    /** Idioma del sistema si la app lo tiene; si no, inglés. */
-    private fun systemDefault(): String {
-        val l = Locale.getDefault().language
-        return if (all.any { it.first == l }) l else "en"
-    }
+    /** Versión del hackatón: inglés por defecto, sin mirar el idioma del sistema. Se cambia desde el globo. */
+    private fun systemDefault(): String = "en"
 
     fun init(ctx: Context) {
         val saved = prefs(ctx).getString("code", null)

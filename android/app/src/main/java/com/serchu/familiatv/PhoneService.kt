@@ -54,7 +54,7 @@ class PhoneService : Service() {
         val aid = o.optString("aid")
         if (aid.isBlank()) return
         link.send(JSONObject().put("type", "ack").put("id", aid))
-        val title = Lang.pick(o, "titulo", "i18n", o.optString("title", "Familia TV"))
+        val title = Lang.pick(o, "titulo", "i18n", o.optString("title", "Hey Family"))
         val text = Lang.pick(o, "texto", "i18n", o.optString("text"))
         Inbox.add(this, aid, title, text, o.optLong("ts"))          // queda en la bandeja de la app
         if (Inbox.markNotified(this, aid)) Notifs.post(this, aid.hashCode(), title, text)
@@ -99,7 +99,7 @@ class PhoneService : Service() {
         )
         return NotificationCompat.Builder(this, Notifs.CH_SERVICE)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle("Familia TV")
+            .setContentTitle("Hey Family")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)

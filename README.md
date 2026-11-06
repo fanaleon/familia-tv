@@ -1,4 +1,4 @@
-# Familia TV
+# Hey Family (antes Familia TV)
 
 Escribís un mensaje en tu móvil y aparece en la tele de casa, arriba de lo que estén viendo, con sonido.
 
@@ -6,8 +6,9 @@ Escribís un mensaje en tu móvil y aparece en la tele de casa, arriba de lo que
  Móvil (app)  --POST /send-->  Relay (Railway)  --WebSocket-->  TV (app, siempre conectada)
 ```
 
-- `relay/` — servidor Node (WebSocket). Si la tele está apagada, el mensaje espera en cola y se muestra al prenderla.
+- `relay/` — servidor Node (WebSocket). Si la tele está apagada, el mensaje espera en cola hasta 5 minutos (`MSG_TTL_MIN`) y se muestra al prenderla; pasado ese tiempo se descarta.
 - `android/` — **una sola app** para los dos: en el móvil te deja escribir, en la TV queda corriendo de fondo.
+- [`PRIVACIDAD.md`](PRIVACIDAD.md) — qué datos maneja la app, dónde se guardan, por cuánto tiempo y qué permisos pide.
 
 ## Puesta en marcha
 
