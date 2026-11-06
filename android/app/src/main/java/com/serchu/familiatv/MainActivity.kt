@@ -560,7 +560,7 @@ class MainActivity : Activity() {
         // Aviso urgente: pantalla roja en la tele. Hay que mantenerlo apretado para que no salga sin querer.
         root.addView(buildUrgentButton(), lp(match, dp(58), top = 12))
         root.addView(
-            label(T("Avisa a toda la tele con pantalla roja y sonido. Sin texto, manda «Necesito que vengas ya». Una vez por minuto."), 12f, Pal.muted)
+            label(T("Avisa a toda la tele con pantalla roja y sonido: «Llamame Urgente». Una vez por minuto."), 12f, Pal.muted)
                 .apply { gravity = Gravity.CENTER },
             lp(match, wrap, top = 6)
         )
@@ -934,7 +934,8 @@ class MainActivity : Activity() {
             .header("Authorization", "Bearer " + Cfg.token)
 
     private fun send(urgent: Boolean = false) {
-        val text = input.text.toString().trim().ifEmpty { if (urgent) T("Necesito que vengas ya") else "" }
+        // El aviso urgente siempre dice lo mismo y no usa ni borra lo que hayas escrito
+        val text = if (urgent) T("Llamame Urgente") else input.text.toString().trim()
         if (text.isEmpty() || sending) return
         if (!Cfg.configured) {
             showFeedback(T("Falta configurar RELAY_URL y RELAY_TOKEN."), Pal.bad)
@@ -991,7 +992,7 @@ class MainActivity : Activity() {
     private fun sendDone(ok: Boolean, delivered: Boolean, askedReply: Boolean, error: String?, total: Int = 1, entregadas: Int = 0, urgent: Boolean = false) {
         sending = false
         if (ok) {
-            input.setText("")
+            if (!urgent) input.setText("")
             wantReply = false // para no tomar el control de la tele sin querer en el próximo mensaje
             renderOptions()
             when {
