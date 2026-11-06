@@ -1454,7 +1454,7 @@ class MainActivity : Activity() {
 
         val amount = label("", 30f, Pal.accentSoft, bold = true)
         left.addView(amount, lp(wrap, wrap, top = 12))
-        val status = label("Preparando el pago…", 20f, Pal.text).apply { maxLines = 3 }
+        val status = label("Preparando el pago…", 20f, Pal.text).apply { maxLines = 6 }
         left.addView(status, lp(wrap, wrap, top = 6))
 
         val methods = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -1588,7 +1588,10 @@ class MainActivity : Activity() {
                 val fecha = if (hasta > 0) SimpleDateFormat("d 'de' MMMM", Locale("es")).format(Date(hasta)) else ""
                 payQr?.setImageDrawable(null)
                 payAmount?.text = "✅  ¡Pago recibido!"
-                if (o.optJSONObject("pago")?.optString("producto") == "extra") {
+                val recibo = o.optJSONObject("pago")?.optJSONObject("recibo")?.optString("texto").orEmpty()
+                if (recibo.isNotBlank()) {
+                    payMessage(recibo, Pal.ok)
+                } else if (o.optJSONObject("pago")?.optString("producto") == "extra") {
                     payMessage("Gracias. Ya podés vincular hasta ${plan?.optInt("capacidad") ?: 0} TV: prendé la nueva y abrí Familia TV.", Pal.ok)
                 } else {
                     payMessage("Gracias. Tu plan está activo hasta el $fecha.", Pal.ok)
