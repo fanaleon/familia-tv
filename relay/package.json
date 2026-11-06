@@ -14,11 +14,8 @@
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
-    "@solana/pay": "^1.2.0",
-    "@solana/kit": "^8.6.0",
-    "@solana-program/system": "^0.16.0",
-    "@solana-program/token": "^0.18.0",
-    "@solana-program/token-2022": "^0.20.0",
-    "@solana-program/memo": "^0.16.0"
+    "@solana/pay": "^0.2.5",
+    "@solana/web3.js": "^1.95.0",
+    "bignumber.js": "^9.1.2"
   }
 }
