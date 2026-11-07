@@ -9,8 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -40,17 +38,3 @@ jobs:
           name: familia-tv-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-      - name: Guardar el APK en la rama apk-guardia
-        if: github.ref == 'refs/heads/version-guardia'
-        run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk /tmp/familia-tv-guardia.apk
-          git config user.name "github-actions"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout --orphan apk-guardia
-          git rm -rf -q --cached .
-          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp /tmp/familia-tv-guardia.apk familia-tv-guardia.apk
-          git add -f familia-tv-guardia.apk
-          git commit -q -m "APK guardia"
-          git push -f origin apk-guardia
