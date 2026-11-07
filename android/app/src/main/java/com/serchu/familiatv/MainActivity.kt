@@ -128,6 +128,11 @@ class MainActivity : Activity() {
     private var tvTarget: String? = null
     private lateinit var bellBtn: TextView
     private lateinit var planLine: TextView
+    private lateinit var phonePayBtn: TextView     // "Pagar con mi wallet" (solo en el móvil, mientras el plan no esté activo)
+    private var phonePlan: JSONObject? = null
+    private var phonePayId: String? = null          // pago en curso iniciado desde el móvil
+    private var phonePayBaseline = 0L
+    private var phonePayUntil = 0L
     private lateinit var tvPicker: HorizontalScrollView
     private lateinit var tvPickerRow: LinearLayout
     private var sessionPin: String? = null // el PIN de padres, solo mientras la app está abierta
@@ -248,6 +253,10 @@ class MainActivity : Activity() {
         } else {
             main.post(phonePoll)
             main.post(phoneTick)
+            if (phonePayId != null) {
+                main.removeCallbacks(phonePayPoll)
+                main.post(phonePayPoll)
+            }
         }
         // Si la pantalla de pago quedó abierta (protector de pantalla, otra app encima), se retoma la consulta
         if (payOverlay != null && !payDone && payId != null) {
@@ -415,6 +424,8 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(0), dp(4), dp(0))
         }
         root.addView(planLine, lp(wrap, wrap, top = 8))
+        phonePayBtn = tvButton("\uD83D\uDCB3  " + T("Pagar con mi wallet")) { choosePhonePay() }.apply { visibility = View.GONE }
+        root.addView(phonePayBtn, lp(wrap, wrap, top = 8))
 
         // Destino: solo aparece cuando hay 2 o más TV vinculadas
         tvTarget = Profile.tvTarget(this)
@@ -1078,6 +1089,113 @@ class MainActivity : Activity() {
         }
         planLine.text = t
         planLine.visibility = if (t.isEmpty()) View.GONE else View.VISIBLE
+        phonePlan = plan
+        // El botón solo está mientras no haya un plan pago: desaparece apenas el servidor confirma el pago
+        if (::phonePayBtn.isInitialized) {
+            val estado = plan.optString("estado")
+            phonePayBtn.visibility = if (estado == "prueba" || estado == "vencido") View.VISIBLE else View.GONE
+        }
+    }
+
+    // ---- pagar el plan desde el móvil con la wallet instalada (Phantom, Solflare…) ----
+
+    private fun choosePhonePay() {
+        if (!Cfg.configured) {
+            showFeedback(T("Falta configurar RELAY_URL y RELAY_TOKEN."), Pal.bad)
+            return
+        }
+        val usd = phonePlan?.optInt("precio_usd", 5) ?: 5
+        AlertDialog.Builder(this)
+            .setTitle(T("Plan: %s USD", usd))
+            .setItems(arrayOf(T("Pagar USDC"), T("Pagar SOL"))) { _, which -> phonePay(if (which == 0) "usdc" else "sol") }
+            .setNegativeButton(T("Cerrar"), null)
+            .show()
+    }
+
+    private fun phonePay(metodo: String) {
+        showFeedback(T("Preparando el pago…"), Pal.muted)
+        val body = JSONObject().put("metodo", metodo).put("producto", "plan").toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        Net.http.newCall(relayRequest("/pay/create").post(body).build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { showFeedback(T("No hay conexión con el servidor. Probá de nuevo."), Pal.bad) }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.use { it.body?.string().orEmpty() }
+                val code = response.code
+                val o = runCatching { JSONObject(raw) }.getOrNull()
+                runOnUiThread {
+                    val pago = o?.optJSONObject("pago")
+                    if (code in 200..299 && pago != null) {
+                        phonePayId = pago.optString("id")
+                        phonePayBaseline = o.optJSONObject("ultimo_pago")?.optLong("at", 0L) ?: 0L
+                        phonePayUntil = SystemClock.elapsedRealtime() + pago.optLong("vence_en", 0L)
+                        openWallet(pago.optString("url"))
+                        main.removeCallbacks(phonePayPoll)
+                        main.postDelayed(phonePayPoll, 3_000)
+                    } else {
+                        when (o?.optString("error")) {
+                            "precio_no_disponible" -> showFeedback(T("No pude averiguar el precio de SOL. Probá con USDC."), Pal.bad)
+                            "pagos_desactivados" -> showFeedback(T("Los pagos todavía no están configurados."), Pal.bad)
+                            else -> showFeedback(T("No se pudo generar el pago (%s).", code), Pal.bad)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /** Abre el link de Solana Pay con la wallet instalada. Si no hay ninguna, copia el link para pegarlo a mano. */
+    private fun openWallet(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            showFeedback(T("Aprobá el pago en tu wallet. Te aviso acá cuando llegue."), Pal.text)
+        } catch (e: Exception) {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Solana Pay", url))
+            showFeedback(T("No encontré una wallet de Solana. Copié el link de pago: pegalo en Phantom o Solflare."), Pal.warn)
+        }
+    }
+
+    private val phonePayPoll: Runnable = object : Runnable {
+        override fun run() {
+            val id = phonePayId ?: return
+            if (SystemClock.elapsedRealtime() > phonePayUntil + 15_000) {
+                phonePayId = null
+                return
+            }
+            Net.http.newCall(relayRequest("/pay/status?id=$id").build()).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+
+                override fun onResponse(call: Call, response: Response) {
+                    val raw = response.use { it.body?.string().orEmpty() }
+                    val o = runCatching { JSONObject(raw) }.getOrNull() ?: return
+                    runOnUiThread { onPhonePayStatus(id, o) }
+                }
+            })
+            main.postDelayed(this, 3_000)
+        }
+    }
+
+    private fun onPhonePayStatus(id: String, o: JSONObject) {
+        if (id != phonePayId) return
+        val last = o.optJSONObject("ultimo_pago")
+        val newer = last != null && last.optLong("at", 0L) > phonePayBaseline
+        when (if (newer) "pagado" else o.optJSONObject("pago")?.optString("estado")) {
+            "pagado" -> {
+                phonePayId = null
+                main.removeCallbacks(phonePayPoll)
+                o.optJSONObject("plan")?.let { renderPlanLine(it) }
+                showFeedback(T("✅  ¡Pago recibido!"), Pal.ok)
+                fetchStatus()
+            }
+            "vencido" -> {
+                phonePayId = null
+                main.removeCallbacks(phonePayPoll)
+                showFeedback(T("Este pago venció. Tocá el botón para generar otro."), Pal.warn)
+            }
+        }
     }
 
     private fun showInbox() {

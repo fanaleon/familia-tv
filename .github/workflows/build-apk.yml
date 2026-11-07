@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths: ['android/**', '.github/workflows/build-apk.yml']
   workflow_dispatch:
+    inputs:
+      upload:
+        description: 'Upload the APK as an artifact (it contains the server key: download it and delete it right away)'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -32,7 +37,7 @@ jobs:
       # The APK embeds the server URL and access key. Artifacts of a public repo can be
       # downloaded by any GitHub user, so upload only when UPLOAD_APK=true (private forks).
       - uses: actions/upload-artifact@v4
-        if: ${{ vars.UPLOAD_APK == 'true' }}
+        if: ${{ vars.UPLOAD_APK == 'true' || inputs.upload }}
         with:
           retention-days: 3
           name: familia-tv-apk
