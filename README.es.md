@@ -152,11 +152,12 @@ En el repo: Settings → Secrets and variables → Actions.
 | Secret | `RELAY_TOKEN` | el código del paso 1 |
 | Variable | `SENDER_NAME` | cómo querés que te vean en la tele (ej. `Papá`) |
 
-Después: pestaña Actions → **Build APK** → Run workflow. A los pocos minutos, bajá el artefacto `familia-tv-apk` (`app-debug.apk`). También compila solo cada vez que se cambia algo en `android/` y se sube a `main`.
+Después: pestaña Actions → **Build APK** → Run workflow. También compila solo cada vez que se cambia algo en `android/` y se sube a `main`. Para obtener el APK terminado, agregá además la variable de repositorio `UPLOAD_APK` = `true`; a los pocos minutos bajá el artefacto `familia-tv-apk` (`app-debug.apk`).
+
+> **Ojo con la seguridad:** el APK lleva adentro la URL y la clave de acceso de tu servidor. Los artefactos de un repo público los puede bajar cualquier usuario de GitHub, así que usá `UPLOAD_APK` solo en una copia **privada** del repo (o borrá el artefacto apenas lo bajes), y nunca subas archivos APK al repo.
 
 El APK se arma con **JDK 17 (Temurin)** y **Gradle 8.7** (`gradle assembleDebug`). El número de versión interno sube solo con cada compilación (`GITHUB_RUN_NUMBER`).
 
-**Ramas de APK:** el mismo workflow, corrido sobre una rama `version-*` (por ejemplo `version-guardia`), además deja el APK listo en una rama aparte (`apk-guardia`) para bajarlo directo con `git fetch origin apk-guardia` y `git show FETCH_HEAD:familia-tv-guardia.apk > hey-family.apk`.
 
 ### 5. Instalar
 Es el mismo APK para todos los equipos.

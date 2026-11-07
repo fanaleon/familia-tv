@@ -154,11 +154,12 @@ In the repo: Settings → Secrets and variables → Actions.
 | Secret | `RELAY_TOKEN` | the key from step 1 |
 | Variable | `SENDER_NAME` | how you want to appear on the TV (e.g. `Dad`) |
 
-Then: Actions tab → **Build APK** → Run workflow. After a few minutes, download the artifact `familia-tv-apk` (`app-debug.apk`). It also builds by itself every time something in `android/` is pushed to `main`.
+Then: Actions tab → **Build APK** → Run workflow. It also builds by itself every time something in `android/` is pushed to `main`. To get the finished APK, also add the repository variable `UPLOAD_APK` = `true`; after a few minutes download the artifact `familia-tv-apk` (`app-debug.apk`).
+
+> **Security note:** the APK has your server URL and access key inside. Artifacts of a public repository can be downloaded by any GitHub user, so only set `UPLOAD_APK` in a **private** copy of the repo (or delete the artifact right after downloading it), and never commit APK files.
 
 The APK is built with **JDK 17 (Temurin)** and **Gradle 8.7** (`gradle assembleDebug`). The internal version number goes up by itself with each build (`GITHUB_RUN_NUMBER`).
 
-**APK branches:** the same workflow, run on a `version-*` branch (for example `version-guardia`), also leaves the finished APK on a separate branch (`apk-guardia`) so you can grab it directly with `git fetch origin apk-guardia` and `git show FETCH_HEAD:familia-tv-guardia.apk > hey-family.apk`.
 
 ### 5. Install
 The same APK goes on every device.
