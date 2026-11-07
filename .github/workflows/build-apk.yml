@@ -31,8 +31,12 @@ jobs:
           SENDER_NAME: ${{ vars.SENDER_NAME }}
         run: gradle assembleDebug --no-daemon
 
+      # The APK embeds the server URL and access key. Artifacts of a public repo can be
+      # downloaded by any GitHub user, so upload only when UPLOAD_APK=true (private forks).
       - uses: actions/upload-artifact@v4
+        if: ${{ vars.UPLOAD_APK == 'true' }}
         with:
+          retention-days: 3
           name: familia-tv-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

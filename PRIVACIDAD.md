@@ -1,5 +1,7 @@
 # Hey Family: datos que maneja la app
 
+🌎 **Español** · [English](PRIVACY.md)
+
 Hey Family no tiene cuentas ni pide datos personales. Guarda lo mínimo para llevar mensajes del móvil a la TV y cobrar el plan, y los mensajes no se conservan más de 5 minutos.
 
 ## Qué se guarda, dónde y por cuánto tiempo
